@@ -5,7 +5,7 @@ import { dirname, join } from 'path';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-// Replicate the exact logic from src/detector.ts for validation
+// Replicate EXACT logic from src/detector.ts  
 const detectLocalRectangle = (pixels, width, height, x, y) => {
   if (x < 0 || x >= width || y < 0 || y >= height) return null;
 
@@ -17,7 +17,6 @@ const detectLocalRectangle = (pixels, width, height, x, y) => {
 
   const colorDiff = Math.max(Math.abs(r - g), Math.abs(r - b), Math.abs(g - b));
   const isColored = colorDiff > 10;
-  const isBright = brightness > 200;
   const isMediumBright = brightness >= 40 && brightness <= 220;
 
   if (isColored && isMediumBright) {
@@ -128,56 +127,57 @@ const expandColoredButton = (pixels, width, height, x, y, fromWhiteText = false)
 
   let left = seedX, right = seedX, top = seedY, bottom = seedY;
 
-  // Expand left with hole tolerance
-  let consecutiveHoles = 0;
-  const maxHoleGap = 15;
-  let leftmostValid = seedX;
-  
+  // Expand left
   for (let tx = seedX; tx >= Math.max(0, seedX - 500); tx--) {
     let rowPasses = 0;
     for (let dy = -5; dy <= 5; dy += 5) {
       const testY = seedY + dy;
-      if (testY >= 0 && testY < height && isButtonPixel(pixels, width, height, tx, testY, refAvg)) {
-        rowPasses++;
+      if (testY >= 0 && testY < height) {
+        const idx = (testY * width + tx) * 4;
+        const r = pixels[idx];
+        const g = pixels[idx + 1];
+        const b = pixels[idx + 2];
+        const avg = (r + g + b) / 3;
+        const colorDiff = Math.max(Math.abs(r - g), Math.abs(r - b), Math.abs(g - b));
+        
+        if (avg > 220 || (colorDiff > 15 && avg >= 40 && avg <= 200 && Math.abs(avg - refAvg) < 60)) {
+          rowPasses++;
+        }
       }
     }
     
     if (rowPasses >= 2) {
-      leftmostValid = tx;
-      consecutiveHoles = 0;
+      left = tx;
     } else {
-      consecutiveHoles++;
-      if (consecutiveHoles > maxHoleGap) {
-        break;
-      }
+      break;
     }
   }
-  left = leftmostValid;
 
-  // Expand right with hole tolerance
-  consecutiveHoles = 0;
-  let rightmostValid = seedX;
-  
+  // Expand right
   for (let tx = seedX; tx < Math.min(width, seedX + 500); tx++) {
     let rowPasses = 0;
     for (let dy = -5; dy <= 5; dy += 5) {
       const testY = seedY + dy;
-      if (testY >= 0 && testY < height && isButtonPixel(pixels, width, height, tx, testY, refAvg)) {
-        rowPasses++;
+      if (testY >= 0 && testY < height) {
+        const idx = (testY * width + tx) * 4;
+        const r = pixels[idx];
+        const g = pixels[idx + 1];
+        const b = pixels[idx + 2];
+        const avg = (r + g + b) / 3;
+        const colorDiff = Math.max(Math.abs(r - g), Math.abs(r - b), Math.abs(g - b));
+        
+        if (avg > 220 || (colorDiff > 15 && avg >= 40 && avg <= 200 && Math.abs(avg - refAvg) < 60)) {
+          rowPasses++;
+        }
       }
     }
     
     if (rowPasses >= 2) {
-      rightmostValid = tx;
-      consecutiveHoles = 0;
+      right = tx;
     } else {
-      consecutiveHoles++;
-      if (consecutiveHoles > maxHoleGap) {
-        break;
-      }
+      break;
     }
   }
-  right = rightmostValid;
 
   // Expand up
   for (let ty = seedY; ty >= Math.max(0, seedY - 80); ty--) {
@@ -186,9 +186,18 @@ const expandColoredButton = (pixels, width, height, x, y, fromWhiteText = false)
     const step = Math.max(1, Math.floor((right - left) / samples));
     
     for (let i = 0; i <= samples; i++) {
-      const testX = Math.min(right, left + i * step);
-      if (isButtonPixel(pixels, width, height, testX, ty, refAvg)) {
-        coloredCount++;
+      const testX = left + i * step;
+      if (testX <= right) {
+        const idx = (ty * width + testX) * 4;
+        const r = pixels[idx];
+        const g = pixels[idx + 1];
+        const b = pixels[idx + 2];
+        const avg = (r + g + b) / 3;
+        const colorDiff = Math.max(Math.abs(r - g), Math.abs(r - b), Math.abs(g - b));
+        
+        if (avg > 220 || (colorDiff > 15 && avg >= 40 && avg <= 200 && Math.abs(avg - refAvg) < 60)) {
+          coloredCount++;
+        }
       }
     }
     
@@ -206,9 +215,18 @@ const expandColoredButton = (pixels, width, height, x, y, fromWhiteText = false)
     const step = Math.max(1, Math.floor((right - left) / samples));
     
     for (let i = 0; i <= samples; i++) {
-      const testX = Math.min(right, left + i * step);
-      if (isButtonPixel(pixels, width, height, testX, ty, refAvg)) {
-        coloredCount++;
+      const testX = left + i * step;
+      if (testX <= right) {
+        const idx = (ty * width + testX) * 4;
+        const r = pixels[idx];
+        const g = pixels[idx + 1];
+        const b = pixels[idx + 2];
+        const avg = (r + g + b) / 3;
+        const colorDiff = Math.max(Math.abs(r - g), Math.abs(r - b), Math.abs(g - b));
+        
+        if (avg > 220 || (colorDiff > 15 && avg >= 40 && avg <= 200 && Math.abs(avg - refAvg) < 60)) {
+          coloredCount++;
+        }
       }
     }
     
@@ -235,25 +253,6 @@ const expandColoredButton = (pixels, width, height, x, y, fromWhiteText = false)
     type: 'button',
     colorInfo: { uniformity: 0.9, avgBrightness: refAvg, isColored: true }
   };
-};
-
-const isButtonPixel = (pixels, width, height, x, y, refBrightness) => {
-  if (x < 0 || x >= width || y < 0 || y >= height) return false;
-  
-  const idx = (y * width + x) * 4;
-  const r = pixels[idx];
-  const g = pixels[idx + 1];
-  const b = pixels[idx + 2];
-  const avg = (r + g + b) / 3;
-  
-  const isWhite = avg > 220;
-  if (isWhite) return true;
-  
-  const colorDiff = Math.max(Math.abs(r - g), Math.abs(r - b), Math.abs(g - b));
-  const isColored = colorDiff > 15 && avg >= 40 && avg <= 200;
-  const isSimilarBrightness = Math.abs(avg - refBrightness) < 50;
-  
-  return isColored && isSimilarBrightness;
 };
 
 const expandWhiteInput = (pixels, width, height, x, y) => {
@@ -388,7 +387,7 @@ const expandColoredLink = (pixels, width, height, x, y) => {
 // Test cases
 const testCases = [
   {
-    name: 'SIGN IN button (blue pixel)',
+    name: 'SIGN IN button (white text on blue)',
     x: 285,
     y: 540,
     expectedType: 'button',
@@ -444,7 +443,7 @@ async function runTests() {
         console.log('✓ PASSED - Correctly returned null');
         passed++;
       } else {
-        console.log(`✗ FAILED - Expected null, got ${JSON.stringify(result)}`);
+        console.log(`✗ FAILED - Expected null, got ${result.type} at (${result.x},${result.y}) ${result.width}x${result.height}`);
         failed++;
       }
     } else {

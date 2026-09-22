@@ -48,17 +48,8 @@ export const detectAtPoint = async (imageData: string, x: number, y: number): Pr
       canvas.height = img.height;
       ctx.drawImage(img, 0, 0);
 
-      // First try point-local detection by expanding from the clicked point
-      const imageDataObj = ctx.getImageData(0, 0, canvas.width, canvas.height);
-      const localRect = detectLocalRectangle(imageDataObj.data, canvas.width, canvas.height, Math.round(x), Math.round(y));
-      
-      if (localRect) {
-        const objects = rectanglesToObjects([localRect]);
-        resolve(objects[0] || null);
-        return;
-      }
-
-      // Fallback: Detect all rectangles, then find the one containing or nearest to the click point
+      // For now, use full-page detection and find the clicked element
+      // This is more reliable than point-local expansion
       const rectangles = detectRectangles(canvas, ctx);
       const clickedRect = findRectangleAtPoint(rectangles, x, y);
       
@@ -74,6 +65,9 @@ export const detectAtPoint = async (imageData: string, x: number, y: number): Pr
   });
 };
 
+// Point-local detection functions - currently unused, using full-page detect instead
+// TODO: Fix expansion logic to handle white text holes properly
+/*
 const detectLocalRectangle = (pixels: Uint8ClampedArray, width: number, height: number, x: number, y: number): (Rectangle & { colorInfo?: any }) | null => {
   // Validate click point is in bounds
   if (x < 0 || x >= width || y < 0 || y >= height) return null;
@@ -87,7 +81,6 @@ const detectLocalRectangle = (pixels: Uint8ClampedArray, width: number, height: 
   // Detect what we clicked on based on pixel characteristics
   const colorDiff = Math.max(Math.abs(r - g), Math.abs(r - b), Math.abs(g - b));
   const isColored = colorDiff > 10;
-  const isBright = brightness > 200;
   const isMediumBright = brightness >= 40 && brightness <= 220;
 
   // Case 1: Clicked on a colored medium-bright fill (like blue button)
@@ -211,76 +204,84 @@ const expandColoredButton = (pixels: Uint8ClampedArray, width: number, height: n
   const refB = pixels[seedIdx + 2];
   const refAvg = (refR + refG + refB) / 3;
 
-  // Expand to find bounds with hole tolerance for white text
+  // Expand to find bounds - simple approach without hole tolerance
   let left = seedX, right = seedX, top = seedY, bottom = seedY;
 
-  // Expand left with hole tolerance - allow up to 15px of holes (white text)
-  let consecutiveHoles = 0;
-  const maxHoleGap = 15;
-  let leftmostValid = seedX;
-  
+  // Expand left - stop when we hit non-button pixels in majority of rows
   for (let tx = seedX; tx >= Math.max(0, seedX - 500); tx--) {
     let rowPasses = 0;
-    // Check 3 rows to determine if this column is part of the button
     for (let dy = -5; dy <= 5; dy += 5) {
       const testY = seedY + dy;
-      if (testY >= 0 && testY < height && isButtonPixel(pixels, width, height, tx, testY, refAvg)) {
-        rowPasses++;
+      if (testY >= 0 && testY < height) {
+        const idx = (testY * width + tx) * 4;
+        const r = pixels[idx];
+        const g = pixels[idx + 1];
+        const b = pixels[idx + 2];
+        const avg = (r + g + b) / 3;
+        const colorDiff = Math.max(Math.abs(r - g), Math.abs(r - b), Math.abs(g - b));
+        
+        // Accept: white (text) OR colored with similar brightness
+        if (avg > 220 || (colorDiff > 15 && avg >= 40 && avg <= 200 && Math.abs(avg - refAvg) < 60)) {
+          rowPasses++;
+        }
       }
     }
     
     if (rowPasses >= 2) {
-      leftmostValid = tx;
-      consecutiveHoles = 0;
+      left = tx;
     } else {
-      consecutiveHoles++;
-      if (consecutiveHoles > maxHoleGap) {
-        break;
-      }
+      break;
     }
   }
-  left = leftmostValid;
 
-  // Expand right with hole tolerance
-  consecutiveHoles = 0;
-  let rightmostValid = seedX;
-  
+  // Expand right
   for (let tx = seedX; tx < Math.min(width, seedX + 500); tx++) {
     let rowPasses = 0;
     for (let dy = -5; dy <= 5; dy += 5) {
       const testY = seedY + dy;
-      if (testY >= 0 && testY < height && isButtonPixel(pixels, width, height, tx, testY, refAvg)) {
-        rowPasses++;
+      if (testY >= 0 && testY < height) {
+        const idx = (testY * width + tx) * 4;
+        const r = pixels[idx];
+        const g = pixels[idx + 1];
+        const b = pixels[idx + 2];
+        const avg = (r + g + b) / 3;
+        const colorDiff = Math.max(Math.abs(r - g), Math.abs(r - b), Math.abs(g - b));
+        
+        if (avg > 220 || (colorDiff > 15 && avg >= 40 && avg <= 200 && Math.abs(avg - refAvg) < 60)) {
+          rowPasses++;
+        }
       }
     }
     
     if (rowPasses >= 2) {
-      rightmostValid = tx;
-      consecutiveHoles = 0;
+      right = tx;
     } else {
-      consecutiveHoles++;
-      if (consecutiveHoles > maxHoleGap) {
-        break;
-      }
+      break;
     }
   }
-  right = rightmostValid;
 
   // Expand up
   for (let ty = seedY; ty >= Math.max(0, seedY - 80); ty--) {
-    // Sample multiple x positions to handle white text holes
     let coloredCount = 0;
     const samples = Math.min(7, right - left + 1);
     const step = Math.max(1, Math.floor((right - left) / samples));
     
     for (let i = 0; i <= samples; i++) {
       const testX = left + i * step;
-      if (testX <= right && isButtonPixel(pixels, width, height, testX, ty, refAvg)) {
-        coloredCount++;
+      if (testX <= right) {
+        const idx = (ty * width + testX) * 4;
+        const r = pixels[idx];
+        const g = pixels[idx + 1];
+        const b = pixels[idx + 2];
+        const avg = (r + g + b) / 3;
+        const colorDiff = Math.max(Math.abs(r - g), Math.abs(r - b), Math.abs(g - b));
+        
+        if (avg > 220 || (colorDiff > 15 && avg >= 40 && avg <= 200 && Math.abs(avg - refAvg) < 60)) {
+          coloredCount++;
+        }
       }
     }
     
-    // Require majority colored to continue expanding up
     if (coloredCount >= samples * 0.5) {
       top = ty;
     } else {
@@ -290,15 +291,23 @@ const expandColoredButton = (pixels: Uint8ClampedArray, width: number, height: n
 
   // Expand down
   for (let ty = seedY; ty < Math.min(height, seedY + 80); ty++) {
-    // Sample multiple x positions
     let coloredCount = 0;
     const samples = Math.min(7, right - left + 1);
     const step = Math.max(1, Math.floor((right - left) / samples));
     
     for (let i = 0; i <= samples; i++) {
       const testX = left + i * step;
-      if (testX <= right && isButtonPixel(pixels, width, height, testX, ty, refAvg)) {
-        coloredCount++;
+      if (testX <= right) {
+        const idx = (ty * width + testX) * 4;
+        const r = pixels[idx];
+        const g = pixels[idx + 1];
+        const b = pixels[idx + 2];
+        const avg = (r + g + b) / 3;
+        const colorDiff = Math.max(Math.abs(r - g), Math.abs(r - b), Math.abs(g - b));
+        
+        if (avg > 220 || (colorDiff > 15 && avg >= 40 && avg <= 200 && Math.abs(avg - refAvg) < 60)) {
+          coloredCount++;
+        }
       }
     }
     
@@ -325,45 +334,6 @@ const expandColoredButton = (pixels: Uint8ClampedArray, width: number, height: n
     confidence: 0.9,
     colorInfo: { uniformity: 0.9, avgBrightness: refAvg, isColored: true }
   };
-};
-
-const isColoredPixel = (pixels: Uint8ClampedArray, width: number, height: number, x: number, y: number, refBrightness: number): boolean => {
-  if (x < 0 || x >= width || y < 0 || y >= height) return false;
-  
-  const idx = (y * width + x) * 4;
-  const r = pixels[idx];
-  const g = pixels[idx + 1];
-  const b = pixels[idx + 2];
-  const avg = (r + g + b) / 3;
-  
-  // Allow white pixels (for text) or colored pixels (for button background)
-  const isWhite = avg > 240;
-  const colorDiff = Math.max(Math.abs(r - g), Math.abs(r - b), Math.abs(g - b));
-  const isColored = colorDiff > 15 && avg > 70 && avg < 210;
-  const isSimilarBrightness = Math.abs(avg - refBrightness) < 60;
-  
-  return isWhite || (isColored && isSimilarBrightness);
-};
-
-const isButtonPixel = (pixels: Uint8ClampedArray, width: number, height: number, x: number, y: number, refBrightness: number): boolean => {
-  if (x < 0 || x >= width || y < 0 || y >= height) return false;
-  
-  const idx = (y * width + x) * 4;
-  const r = pixels[idx];
-  const g = pixels[idx + 1];
-  const b = pixels[idx + 2];
-  const avg = (r + g + b) / 3;
-  
-  // Allow white pixels (for text holes in the button)
-  const isWhite = avg > 220;
-  if (isWhite) return true;
-  
-  // For colored pixels, check both brightness similarity AND color saturation
-  const colorDiff = Math.max(Math.abs(r - g), Math.abs(r - b), Math.abs(g - b));
-  const isColored = colorDiff > 15 && avg >= 40 && avg <= 200;
-  const isSimilarBrightness = Math.abs(avg - refBrightness) < 50;
-  
-  return isColored && isSimilarBrightness;
 };
 
 const expandWhiteInput = (pixels: Uint8ClampedArray, width: number, height: number, x: number, y: number): (Rectangle & { colorInfo?: any }) | null => {
@@ -502,6 +472,7 @@ const expandColoredLink = (pixels: Uint8ClampedArray, width: number, height: num
     colorInfo: { uniformity: 0.5, avgBrightness: 150, isColored: true }
   };
 };
+*/
 
 const findRectangleAtPoint = (rectangles: (Rectangle & { colorInfo?: any })[], x: number, y: number): (Rectangle & { colorInfo?: any }) | null => {
   // Find rectangles that contain the point
