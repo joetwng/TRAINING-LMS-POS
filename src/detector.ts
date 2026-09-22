@@ -271,65 +271,58 @@ const getOverlapArea = (a: Rectangle, b: Rectangle): number => {
 
 const findTextLinks = (pixels: Uint8ClampedArray, width: number, height: number, existingRects: Rectangle[]): (Rectangle & { colorInfo?: any })[] => {
   const links: (Rectangle & { colorInfo?: any })[] = [];
-  const scanStep = 5;
   
-  // Look for horizontal runs of colored pixels (potential link text)
-  for (let y = height * 0.3; y < height * 0.8; y += scanStep) {
-    let runStart = -1;
-    let runLength = 0;
-    let coloredCount = 0;
+  // Look for horizontal bands of colored pixels (potential link text)
+  // Scan multiple lines and aggregate
+  for (let y = Math.floor(height * 0.3); y < Math.floor(height * 0.8); y += 3) {
+    const bandPixels: number[] = [];
     
-    for (let x = width * 0.1; x < width * 0.9; x++) {
-      const idx = (Math.floor(y) * width + Math.floor(x)) * 4;
-      const r = pixels[idx];
-      const g = pixels[idx + 1];
-      const b = pixels[idx + 2];
-      
-      // Check if this is a colored pixel (not black/white/gray)
-      const isColored = (
-        (Math.abs(r - g) > 15 || Math.abs(r - b) > 15 || Math.abs(g - b) > 15) &&
-        (r + g + b) < 650 &&
-        (r + g + b) > 50
-      );
-      
-      if (isColored) {
-        if (runStart === -1) {
-          runStart = x;
-        }
-        runLength = x - runStart + 1;
-        coloredCount++;
-      } else if (runStart !== -1 && runLength > 10) {
-        // Check if we've accumulated enough colored pixels
-        if (coloredCount > runLength * 0.15 && runLength >= 100 && runLength <= 400) {
-          // Found a potential link - check if it overlaps with existing rectangles
-          const linkRect = {
-            x: runStart,
-            y: y - 10,
-            width: runLength,
-            height: 25,
-            confidence: 0.7
-          };
-          
-          const overlapsExisting = existingRects.some(existing => {
-            const overlap = getOverlapArea(linkRect, existing);
-            return overlap > linkRect.width * linkRect.height * 0.3;
-          });
-          
-          if (!overlapsExisting) {
-            links.push({
-              ...linkRect,
-              colorInfo: {uniformity: 0.5, avgBrightness: 100, isColored: true}
-            });
-          }
-        }
+    // Sample a band of 3 pixels height
+    for (let dy = 0; dy < 3; dy++) {
+      for (let x = Math.floor(width * 0.1); x < Math.floor(width * 0.9); x++) {
+        const idx = ((y + dy) * width + x) * 4;
+        const r = pixels[idx];
+        const g = pixels[idx + 1];
+        const b = pixels[idx + 2];
         
-        runStart = -1;
-        runLength = 0;
-        coloredCount = 0;
-      } else if (x - runStart > 50) {
-        runStart = -1;
-        runLength = 0;
-        coloredCount = 0;
+        // More lenient color detection - catch light blues/colored text
+        const isColored = (
+          (Math.abs(r - g) > 8 || Math.abs(r - b) > 8 || Math.abs(g - b) > 8) &&
+          (r + g + b) < 720 && // Allow lighter colors
+          (r + g + b) > 40
+        );
+        
+        if (isColored) {
+          bandPixels.push(x);
+        }
+      }
+    }
+    
+    // If we found enough colored pixels, try to form a rectangle
+    if (bandPixels.length > 30) {
+      const minX = Math.min(...bandPixels);
+      const maxX = Math.max(...bandPixels);
+      const width = maxX - minX + 1;
+      
+      if (width >= 80 && width <= 350) {
+        const linkRect = {
+          x: minX,
+          y: y - 5,
+          width: width,
+          height: 20,
+          confidence: 0.7,
+          colorInfo: {uniformity: 0.5, avgBrightness: 150, isColored: true}
+        };
+        
+        // Check if it overlaps with existing rectangles
+        const overlapsExisting = existingRects.some(existing => {
+          const overlap = getOverlapArea(linkRect, existing);
+          return overlap > linkRect.width * linkRect.height * 0.3;
+        });
+        
+        if (!overlapsExisting) {
+          links.push(linkRect);
+        }
       }
     }
   }
