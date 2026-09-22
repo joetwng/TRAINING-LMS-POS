@@ -115,7 +115,11 @@ function App() {
   };
 
   const handleDeletePage = (pageId: string) => {
-    setPages(prev => prev.filter(p => p.id !== pageId));
+    setPages(prev => {
+      const updated = prev.filter(p => p.id !== pageId);
+      setTimeout(() => flushSave(), 0);
+      return updated;
+    });
     if (currentPageId === pageId) {
       setCurrentPageId(null);
       setViewMode('list');
@@ -123,7 +127,11 @@ function App() {
   };
 
   const handleRenamePage = (pageId: string, newName: string) => {
-    setPages(prev => prev.map(p => p.id === pageId ? { ...p, name: newName } : p));
+    setPages(prev => {
+      const updated = prev.map(p => p.id === pageId ? { ...p, name: newName } : p);
+      setTimeout(() => flushSave(), 0);
+      return updated;
+    });
   };
 
   const handleSelectPage = (pageId: string) => {
@@ -144,9 +152,13 @@ function App() {
 
   const handleUpdateObjects = (objects: DetectedObject[]) => {
     if (!currentPageId) return;
-    setPages(prev => prev.map(p => 
-      p.id === currentPageId ? { ...p, objects } : p
-    ));
+    setPages(prev => {
+      const updated = prev.map(p => 
+        p.id === currentPageId ? { ...p, objects } : p
+      );
+      setTimeout(() => flushSave(), 0);
+      return updated;
+    });
   };
 
   const goBack = () => {
