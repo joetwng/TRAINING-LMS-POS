@@ -157,7 +157,7 @@ const rectanglesToObjects = (rectangles: Rectangle[]): DetectedObject[] => {
       type,
       label: `${type}_${index + 1}`,
       required: false,
-      maxLength: type === 'text' || type === 'password' ? 100 : undefined,
+      maxLength: type === 'text' ? 100 : undefined,
       targetPage: undefined,
     };
   });
@@ -167,12 +167,14 @@ const inferType = (rect: Rectangle): DetectedObject['type'] => {
   const aspectRatio = rect.width / rect.height;
   const area = rect.width * rect.height;
 
+  // Auto-detect restricted to: INPUT, RADIO, CHECKBOX, BUTTON only
+  
   if (area < 800) {
     return 'checkbox';
   }
   
   if (aspectRatio > 4 && rect.height < 50) {
-    return 'text';
+    return 'text'; // INPUT type
   }
   
   if (aspectRatio > 2 && rect.height < 60) {
@@ -183,9 +185,8 @@ const inferType = (rect: Rectangle): DetectedObject['type'] => {
     return 'radio';
   }
   
-  if (area > 5000) {
-    return 'select';
-  }
+  // Large areas that would have been 'select' are now mapped to 'button'
+  // to comply with auto-detect restrictions
 
   return 'button';
 };
