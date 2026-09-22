@@ -73,7 +73,7 @@ const detectEdges = (data: Uint8ClampedArray, width: number, height: number): bo
 
 const findRectangularRegions = (edges: boolean[][], width: number, height: number): Rectangle[] => {
   const rectangles: Rectangle[] = [];
-  const minSize = 20;
+  const minSize = 30;
   const maxSize = Math.min(width, height) * 0.8;
   const step = 10;
 
@@ -82,7 +82,7 @@ const findRectangularRegions = (edges: boolean[][], width: number, height: numbe
       for (let h = minSize; h < maxSize && y + h < height; h += step * 2) {
         for (let w = minSize; w < maxSize && x + w < width; w += step * 2) {
           const score = scoreRectangle(edges, x, y, w, h);
-          if (score > 0.3) {
+          if (score > 0.35) {
             rectangles.push({ x, y, width: w, height: h, confidence: score });
           }
         }
@@ -125,19 +125,28 @@ const scoreRectangle = (edges: boolean[][], x: number, y: number, w: number, h: 
 };
 
 const filterAndMergeRectangles = (rectangles: Rectangle[]): Rectangle[] => {
-  const sorted = rectangles.sort((a, b) => b.confidence - a.confidence);
+  const sorted = rectangles.sort((a, b) => {
+    const scoreA = b.confidence * Math.sqrt(b.width * b.height);
+    const scoreB = a.confidence * Math.sqrt(a.width * a.height);
+    return scoreA - scoreB;
+  });
   const filtered: Rectangle[] = [];
 
   for (const rect of sorted) {
+    const area = rect.width * rect.height;
+    if (area < 1000 && rect.width < 100) {
+      continue;
+    }
+
     const overlaps = filtered.some(existing => {
       const overlapX = Math.max(0, Math.min(existing.x + existing.width, rect.x + rect.width) - Math.max(existing.x, rect.x));
       const overlapY = Math.max(0, Math.min(existing.y + existing.height, rect.y + rect.height) - Math.max(existing.y, rect.y));
       const overlapArea = overlapX * overlapY;
       const rectArea = rect.width * rect.height;
-      return overlapArea > rectArea * 0.5;
+      return overlapArea > rectArea * 0.4;
     });
 
-    if (!overlaps && filtered.length < 30) {
+    if (!overlaps && filtered.length < 10) {
       filtered.push(rect);
     }
   }
@@ -171,21 +180,21 @@ const inferType = (rect: Rectangle): DetectedObject['type'] => {
     return 'checkbox';
   }
   
-  if (aspectRatio > 4 && rect.height < 50) {
-    return 'text';
-  }
-  
-  if (aspectRatio > 2 && rect.height < 60) {
-    return 'button';
-  }
-  
   if (aspectRatio < 0.5) {
     return 'radio';
   }
   
-  if (area > 5000) {
-    return 'select';
+  if (aspectRatio > 4 && rect.height < 50) {
+    return 'text';
+  }
+  
+  if (aspectRatio > 2.5 && area < 15000 && rect.height > 30 && rect.height < 80) {
+    return 'button';
+  }
+  
+  if (aspectRatio > 1.5 && area < 8000 && rect.height < 40) {
+    return 'link';
   }
 
-  return 'button';
+  return 'text';
 };
