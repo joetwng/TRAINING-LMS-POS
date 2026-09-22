@@ -40,14 +40,15 @@ const detectRectangles = (canvas: HTMLCanvasElement, ctx: CanvasRenderingContext
   const data = imageData.data;
 
   const edgeMap = detectEdges(data, width, height);
-  const rectangles = findRectangularRegions(edgeMap, width, height);
+  const rectangles = findFormComponents(edgeMap, data, width, height);
+  const links = findTextLinks(data, width, height, rectangles);
   
-  return rectangles;
+  return [...rectangles, ...links];
 };
 
 const detectEdges = (data: Uint8ClampedArray, width: number, height: number): boolean[][] => {
   const edges: boolean[][] = Array(height).fill(null).map(() => Array(width).fill(false));
-  const threshold = 40;
+  const threshold = 30;
 
   for (let y = 1; y < height - 1; y++) {
     for (let x = 1; x < width - 1; x++) {
@@ -71,92 +72,294 @@ const detectEdges = (data: Uint8ClampedArray, width: number, height: number): bo
   return edges;
 };
 
-const findRectangularRegions = (edges: boolean[][], width: number, height: number): Rectangle[] => {
+const findFormComponents = (edges: boolean[][], pixels: Uint8ClampedArray, width: number, height: number): Rectangle[] => {
   const rectangles: Rectangle[] = [];
-  const minSize = 30;
-  const maxSize = Math.min(width, height) * 0.8;
-  const step = 10;
-
-  for (let y = 0; y < height - minSize; y += step) {
-    for (let x = 0; x < width - minSize; x += step) {
-      for (let h = minSize; h < maxSize && y + h < height; h += step * 2) {
-        for (let w = minSize; w < maxSize && x + w < width; w += step * 2) {
-          const score = scoreRectangle(edges, x, y, w, h);
-          if (score > 0.35) {
-            rectangles.push({ x, y, width: w, height: h, confidence: score });
-          }
+  
+  // Focus on finding clear rectangular borders typical of form inputs and buttons
+  const minWidth = 100;
+  const minHeight = 30;
+  const maxWidth = width * 0.9;
+  const maxHeight = height * 0.15;
+  
+  // Scan for horizontal runs of edges (top and bottom borders)
+  const horizontalRuns: Array<{y: number, x1: number, x2: number}> = [];
+  
+  for (let y = 0; y < height; y++) {
+    let runStart = -1;
+    let runLength = 0;
+    
+    for (let x = 0; x < width; x++) {
+      if (edges[y][x]) {
+        if (runStart === -1) {
+          runStart = x;
+          runLength = 1;
+        } else {
+          runLength++;
         }
+      } else {
+        if (runLength >= minWidth * 0.6) {
+          horizontalRuns.push({y, x1: runStart, x2: runStart + runLength});
+        }
+        runStart = -1;
+        runLength = 0;
+      }
+    }
+    if (runLength >= minWidth * 0.6) {
+      horizontalRuns.push({y, x1: runStart, x2: runStart + runLength});
+    }
+  }
+  
+  // Find pairs of horizontal runs that form rectangles
+  for (let i = 0; i < horizontalRuns.length; i++) {
+    const top = horizontalRuns[i];
+    
+    for (let j = i + 1; j < horizontalRuns.length; j++) {
+      const bottom = horizontalRuns[j];
+      const h = bottom.y - top.y;
+      
+      if (h < minHeight || h > maxHeight) continue;
+      
+      // Check if runs overlap horizontally
+      const x1 = Math.max(top.x1, bottom.x1);
+      const x2 = Math.min(top.x2, bottom.x2);
+      const w = x2 - x1;
+      
+      if (w < minWidth || w > maxWidth) continue;
+      
+      // Verify vertical edges exist
+      const leftEdgeScore = scoreVerticalEdge(edges, x1, top.y, h);
+      const rightEdgeScore = scoreVerticalEdge(edges, x2, top.y, h);
+      
+      if (leftEdgeScore > 0.3 && rightEdgeScore > 0.3) {
+        const confidence = (leftEdgeScore + rightEdgeScore) / 2;
+        rectangles.push({
+          x: x1,
+          y: top.y,
+          width: w,
+          height: h,
+          confidence
+        });
       }
     }
   }
-
-  return filterAndMergeRectangles(rectangles);
+  
+  // Filter and deduplicate
+  return filterRectangles(rectangles, pixels, width, height);
 };
 
-const scoreRectangle = (edges: boolean[][], x: number, y: number, w: number, h: number): number => {
+const scoreVerticalEdge = (edges: boolean[][], x: number, y: number, height: number): number => {
   let edgeCount = 0;
-  let totalSamples = 0;
-
-  const sampleDensity = 5;
-
-  for (let i = 0; i < w; i += sampleDensity) {
-    if (y >= 0 && y < edges.length && x + i >= 0 && x + i < edges[0].length) {
-      if (edges[y][x + i]) edgeCount++;
-      totalSamples++;
-    }
-    if (y + h >= 0 && y + h < edges.length && x + i >= 0 && x + i < edges[0].length) {
-      if (edges[y + h][x + i]) edgeCount++;
-      totalSamples++;
+  const samples = Math.min(height, 50);
+  const step = Math.max(1, Math.floor(height / samples));
+  
+  for (let i = 0; i < height; i += step) {
+    const py = y + i;
+    if (py >= 0 && py < edges.length && x >= 0 && x < edges[0].length) {
+      if (edges[py][x] || (x > 0 && edges[py][x-1]) || (x < edges[0].length-1 && edges[py][x+1])) {
+        edgeCount++;
+      }
     }
   }
-
-  for (let i = 0; i < h; i += sampleDensity) {
-    if (y + i >= 0 && y + i < edges.length && x >= 0 && x < edges[0].length) {
-      if (edges[y + i][x]) edgeCount++;
-      totalSamples++;
-    }
-    if (y + i >= 0 && y + i < edges.length && x + w >= 0 && x + w < edges[0].length) {
-      if (edges[y + i][x + w]) edgeCount++;
-      totalSamples++;
-    }
-  }
-
-  return totalSamples > 0 ? edgeCount / totalSamples : 0;
+  
+  return edgeCount / (height / step);
 };
 
-const filterAndMergeRectangles = (rectangles: Rectangle[]): Rectangle[] => {
-  const sorted = rectangles.sort((a, b) => {
-    const scoreA = b.confidence * Math.sqrt(b.width * b.height);
-    const scoreB = a.confidence * Math.sqrt(a.width * a.height);
-    return scoreA - scoreB;
+const filterRectangles = (rectangles: Rectangle[], pixels: Uint8ClampedArray, width: number, height: number): Rectangle[] => {
+  // Filter by analyzing interior content
+  const filtered = rectangles.map(rect => {
+    // Reject if too small or too large
+    if (rect.width < 80 || rect.height < 25) return null;
+    if (rect.width > width * 0.9 || rect.height > height * 0.3) return null;
+    
+    // Check interior color uniformity and brightness
+    const colorInfo = analyzeInterior(pixels, width, rect);
+    if (colorInfo.uniformity < 0.4) return null;
+    
+    // Attach color info for type inference
+    return { ...rect, colorInfo };
+  }).filter(r => r !== null) as (Rectangle & { colorInfo: {uniformity: number, avgBrightness: number, isColored: boolean} })[];
+  
+  // Remove overlapping rectangles, keeping better ones
+  const sorted = filtered.sort((a, b) => {
+    const scoreA = a.confidence * Math.sqrt(a.width * a.height);
+    const scoreB = b.confidence * Math.sqrt(b.width * b.height);
+    return scoreB - scoreA;
   });
-  const filtered: Rectangle[] = [];
-
+  
+  const final: (Rectangle & { colorInfo?: any })[] = [];
+  
   for (const rect of sorted) {
-    const area = rect.width * rect.height;
-    if (area < 1000 && rect.width < 100) {
-      continue;
-    }
-
-    const overlaps = filtered.some(existing => {
-      const overlapX = Math.max(0, Math.min(existing.x + existing.width, rect.x + rect.width) - Math.max(existing.x, rect.x));
-      const overlapY = Math.max(0, Math.min(existing.y + existing.height, rect.y + rect.height) - Math.max(existing.y, rect.y));
-      const overlapArea = overlapX * overlapY;
+    const overlaps = final.some(existing => {
+      const overlapArea = getOverlapArea(rect, existing);
       const rectArea = rect.width * rect.height;
-      return overlapArea > rectArea * 0.4;
+      const existingArea = existing.width * existing.height;
+      return overlapArea > Math.min(rectArea, existingArea) * 0.5;
     });
-
-    if (!overlaps && filtered.length < 10) {
-      filtered.push(rect);
+    
+    if (!overlaps && final.length < 6) {
+      final.push(rect);
     }
   }
-
-  return filtered;
+  
+  return final;
 };
 
-const rectanglesToObjects = (rectangles: Rectangle[]): DetectedObject[] => {
-  return rectangles.map((rect, index) => {
-    const type = inferType(rect);
+const analyzeInterior = (pixels: Uint8ClampedArray, width: number, rect: Rectangle): {uniformity: number, avgBrightness: number, isColored: boolean} => {
+  const samples = 20;
+  const grays: number[] = [];
+  let totalR = 0, totalG = 0, totalB = 0;
+  let sampleCount = 0;
+  
+  const stepX = Math.max(1, Math.floor(rect.width / samples));
+  const stepY = Math.max(1, Math.floor(rect.height / samples));
+  
+  for (let dy = 5; dy < rect.height - 5; dy += stepY) {
+    for (let dx = 5; dx < rect.width - 5; dx += stepX) {
+      const x = rect.x + dx;
+      const y = rect.y + dy;
+      if (x >= 0 && x < width && y >= 0 && y < pixels.length / width / 4) {
+        const idx = (y * width + x) * 4;
+        const r = pixels[idx];
+        const g = pixels[idx + 1];
+        const b = pixels[idx + 2];
+        const gray = (r + g + b) / 3;
+        grays.push(gray);
+        totalR += r;
+        totalG += g;
+        totalB += b;
+        sampleCount++;
+      }
+    }
+  }
+  
+  if (grays.length === 0) return {uniformity: 0, avgBrightness: 0, isColored: false};
+  
+  const mean = grays.reduce((a, b) => a + b, 0) / grays.length;
+  const variance = grays.reduce((sum, c) => sum + Math.pow(c - mean, 2), 0) / grays.length;
+  const stdDev = Math.sqrt(variance);
+  
+  const avgR = totalR / sampleCount;
+  const avgG = totalG / sampleCount;
+  const avgB = totalB / sampleCount;
+  
+  // Check if it's a colored region (like a blue button)
+  const colorDiff = Math.max(
+    Math.abs(avgR - avgG),
+    Math.abs(avgR - avgB),
+    Math.abs(avgG - avgB)
+  );
+  const isColored = colorDiff > 20 && mean < 200;
+  
+  const uniformity = Math.max(0, 1 - (stdDev / 80));
+  
+  return {
+    uniformity,
+    avgBrightness: mean,
+    isColored
+  };
+};
+
+const getOverlapArea = (a: Rectangle, b: Rectangle): number => {
+  const x1 = Math.max(a.x, b.x);
+  const y1 = Math.max(a.y, b.y);
+  const x2 = Math.min(a.x + a.width, b.x + b.width);
+  const y2 = Math.min(a.y + a.height, b.y + b.height);
+  
+  if (x2 <= x1 || y2 <= y1) return 0;
+  return (x2 - x1) * (y2 - y1);
+};
+
+const findTextLinks = (pixels: Uint8ClampedArray, width: number, height: number, existingRects: Rectangle[]): (Rectangle & { colorInfo?: any })[] => {
+  const links: (Rectangle & { colorInfo?: any })[] = [];
+  const scanStep = 5;
+  
+  // Look for horizontal runs of colored pixels (potential link text)
+  for (let y = height * 0.3; y < height * 0.8; y += scanStep) {
+    let runStart = -1;
+    let runLength = 0;
+    let coloredCount = 0;
+    
+    for (let x = width * 0.1; x < width * 0.9; x++) {
+      const idx = (Math.floor(y) * width + Math.floor(x)) * 4;
+      const r = pixels[idx];
+      const g = pixels[idx + 1];
+      const b = pixels[idx + 2];
+      
+      // Check if this is a colored pixel (not black/white/gray)
+      const isColored = (
+        (Math.abs(r - g) > 15 || Math.abs(r - b) > 15 || Math.abs(g - b) > 15) &&
+        (r + g + b) < 650 &&
+        (r + g + b) > 50
+      );
+      
+      if (isColored) {
+        if (runStart === -1) {
+          runStart = x;
+        }
+        runLength = x - runStart + 1;
+        coloredCount++;
+      } else if (runStart !== -1 && runLength > 10) {
+        // Check if we've accumulated enough colored pixels
+        if (coloredCount > runLength * 0.15 && runLength >= 100 && runLength <= 400) {
+          // Found a potential link - check if it overlaps with existing rectangles
+          const linkRect = {
+            x: runStart,
+            y: y - 10,
+            width: runLength,
+            height: 25,
+            confidence: 0.7
+          };
+          
+          const overlapsExisting = existingRects.some(existing => {
+            const overlap = getOverlapArea(linkRect, existing);
+            return overlap > linkRect.width * linkRect.height * 0.3;
+          });
+          
+          if (!overlapsExisting) {
+            links.push({
+              ...linkRect,
+              colorInfo: {uniformity: 0.5, avgBrightness: 100, isColored: true}
+            });
+          }
+        }
+        
+        runStart = -1;
+        runLength = 0;
+        coloredCount = 0;
+      } else if (x - runStart > 50) {
+        runStart = -1;
+        runLength = 0;
+        coloredCount = 0;
+      }
+    }
+  }
+  
+  // Deduplicate links that are close together
+  const deduped: (Rectangle & { colorInfo?: any })[] = [];
+  for (const link of links) {
+    const isDuplicate = deduped.some(existing => 
+      Math.abs(link.y - existing.y) < 30 && Math.abs(link.x - existing.x) < 50
+    );
+    if (!isDuplicate) {
+      deduped.push(link);
+    }
+  }
+  
+  return deduped.slice(0, 2); // Max 2 links
+};
+
+const rectanglesToObjects = (rectangles: (Rectangle & { colorInfo?: any })[]): DetectedObject[] => {
+  // Sort by Y position to process top-to-bottom
+  const sorted = [...rectangles].sort((a, b) => a.y - b.y);
+  
+  return sorted.map((rect, index) => {
+    let type = inferType(rect, index, sorted.length);
+    
+    // Override type for very small colored regions (likely links)
+    if (rect.colorInfo?.isColored && rect.height < 35 && rect.width < 350) {
+      type = 'link';
+    }
+    
     return {
       id: generateId(),
       x: rect.x,
@@ -172,29 +375,39 @@ const rectanglesToObjects = (rectangles: Rectangle[]): DetectedObject[] => {
   });
 };
 
-const inferType = (rect: Rectangle): DetectedObject['type'] => {
+const inferType = (rect: Rectangle & { colorInfo?: any }, _index: number, _total: number): DetectedObject['type'] => {
   const aspectRatio = rect.width / rect.height;
   const area = rect.width * rect.height;
-
-  if (area < 800) {
-    return 'checkbox';
-  }
+  const height = rect.height;
   
-  if (aspectRatio < 0.5) {
-    return 'radio';
-  }
+  // Check if it's a colored (filled) button vs white input field
+  const isColored = rect.colorInfo?.isColored || false;
+  const brightness = rect.colorInfo?.avgBrightness || 255;
   
-  if (aspectRatio > 4 && rect.height < 50) {
-    return 'text';
-  }
-  
-  if (aspectRatio > 2.5 && area < 15000 && rect.height > 30 && rect.height < 80) {
+  // Buttons are typically colored/dark interiors
+  if (isColored && height >= 40) {
     return 'button';
   }
   
-  if (aspectRatio > 1.5 && area < 8000 && rect.height < 40) {
-    return 'link';
+  // Large bright white rectangles = input fields
+  if (brightness > 220 && height >= 35 && height <= 80 && aspectRatio > 4) {
+    return 'text';
   }
-
+  
+  // Tall rectangles with color = buttons
+  if (height >= 55 && area > 20000) {
+    return 'button';
+  }
+  
+  // Medium-height bright rectangles = inputs
+  if (height >= 35 && height <= 65 && brightness > 200) {
+    return 'text';
+  }
+  
+  // Default based on size
+  if (area > 18000 && height > 50) {
+    return 'button';
+  }
+  
   return 'text';
 };
