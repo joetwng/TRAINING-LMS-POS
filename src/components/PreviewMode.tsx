@@ -168,6 +168,29 @@ export const PreviewMode: React.FC<PreviewModeProps> = ({
           </select>
         );
 
+      case 'link':
+        return (
+          <a
+            key={obj.id}
+            onClick={(e) => {
+              e.preventDefault();
+              if (hasTarget) handleObjectClick(obj);
+            }}
+            style={{
+              ...style,
+              color: '#007bff',
+              textDecoration: 'underline',
+              cursor: hasTarget ? 'pointer' : 'default',
+              fontSize: '13px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+          >
+            {obj.label}
+          </a>
+        );
+
       default:
         return null;
     }

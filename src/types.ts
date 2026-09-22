@@ -4,7 +4,7 @@ export interface DetectedObject {
   y: number;
   width: number;
   height: number;
-  type: 'text' | 'number' | 'password' | 'checkbox' | 'radio' | 'button' | 'select';
+  type: 'text' | 'number' | 'password' | 'checkbox' | 'radio' | 'button' | 'select' | 'link';
   label: string;
   required: boolean;
   maxLength?: number;

@@ -282,6 +282,7 @@ export const SetupEditor: React.FC<SetupEditorProps> = ({
                   <option value="radio">Radio Button</option>
                   <option value="button">Button</option>
                   <option value="select">Select/Dropdown</option>
+                  <option value="link">Link</option>
                 </select>
               </div>
 
