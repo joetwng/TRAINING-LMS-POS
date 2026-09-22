@@ -6,7 +6,11 @@ A web MVP for creating interactive training flows from screenshots. Upload scree
 
 - **Page Management**: Create, rename, and delete named pages (e.g., loginpage, mainpage)
 - **Screenshot Upload**: Upload screenshot images for each page
-- **Auto-Detection**: Automatically detect UI components from screenshots using edge detection algorithms
+- **Auto-Detection**: Automatically detect UI components from screenshots using multi-pass algorithms:
+  - Edge-based detection for inputs with clear borders
+  - Filled region detection for soft-bordered white inputs
+  - Colored button detection for filled buttons (e.g., blue SIGN IN buttons)
+  - Text link detection for colored hyperlinks
 - **Click-to-Detect**: Click on any UI control in a screenshot to automatically detect and add it
 - **Component Configuration**: Set properties for each detected component:
   - Type (text, number, password, checkbox, radio, button, select)
@@ -77,10 +81,10 @@ Test your flow! The preview overlays real HTML controls on the screenshot. Click
 
 ## Auto-Detection Algorithm
 
-The detection system uses a custom heuristic approach:
+The detection system uses a multi-pass heuristic approach:
 
 1. **Edge Detection**: Analyzes pixel gradients to identify high-contrast boundaries
-   - Compares each pixel against its 4 neighbors
+   - Compares each pixel against its 4 neighbors (low threshold of 8 for soft borders)
    - Threshold-based detection for robustness
    - Creates a binary edge map
 
@@ -89,9 +93,24 @@ The detection system uses a custom heuristic approach:
    - Scores rectangles based on edge density along perimeters
    - Filters overlapping regions, keeping highest-confidence matches
 
-3. **Type Inference**: Classifies detected rectangles based on geometry
+3. **Filled Region Detection**: Finds white input fields that edge detection may miss
+   - Scans for high-brightness uniform regions
+   - Only runs if fewer than 2 rectangles found via edges
+
+4. **Colored Button Detection**: Finds filled buttons with soft/rounded borders
+   - Scans lower portion of screen for colored (non-white) regions
+   - Expands from seed points to find button boundaries
+   - Detects buttons like blue "SIGN IN" that have weak edges
+
+5. **Text Link Detection**: Identifies colored text that may be clickable
+   - Scans for bands of colored pixels (e.g., blue text)
+   - Filters out labels near input fields
+   - Finds links like "FORGOT YOUR PASSWORD?"
+
+6. **Type Inference**: Classifies detected rectangles based on geometry and color
    - Aspect ratio analysis (wide = text input, medium = button)
-   - Area thresholds (small = checkbox)
+   - Color analysis (colored + medium brightness = button, white = input)
+   - Area thresholds (small = checkbox, large colored = button)
    - Shape analysis (tall/narrow = radio button)
    - Color analysis (colored text regions = links)
    - **Auto-detect restricted to**: INPUT (text), RADIO, CHECKBOX, BUTTON, LINK
@@ -161,6 +180,20 @@ npm run preview
 # Lint
 npm run lint
 ```
+
+## Testing
+
+The detector can be validated against test fixtures:
+
+```bash
+# Validate detector against login-page.png
+node validate-detector.cjs fixtures/login-page.png
+```
+
+This validation script mirrors the actual `src/detector.ts` logic and verifies that:
+- Input fields (Username, Password) are detected
+- Colored buttons (like SIGN IN) are detected
+- Text links (like FORGOT YOUR PASSWORD?) are detected
 
 ## Sample Workflow
 
