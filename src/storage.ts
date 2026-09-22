@@ -99,21 +99,25 @@ export const savePages = async (pages: Page[]): Promise<void> => {
     const transaction = db.transaction(STORE_NAME, 'readwrite');
     const store = transaction.objectStore(STORE_NAME);
 
-    const existingKeys = await new Promise<string[]>((resolve, reject) => {
-      const request = store.getAllKeys();
-      request.onsuccess = () => resolve(request.result as string[]);
-      request.onerror = () => reject(request.error);
-    });
+    const getAllKeysRequest = store.getAllKeys();
+    
+    getAllKeysRequest.onsuccess = () => {
+      const existingKeys = getAllKeysRequest.result as IDBValidKey[];
 
-    for (const key of existingKeys) {
-      if (!pages.find(p => p.id === key)) {
-        store.delete(key);
+      for (const key of existingKeys) {
+        if (!pages.find(p => p.id === key)) {
+          store.delete(key);
+        }
       }
-    }
 
-    for (const page of pages) {
-      store.put(page);
-    }
+      for (const page of pages) {
+        store.put(page);
+      }
+    };
+
+    getAllKeysRequest.onerror = () => {
+      console.error('Failed to get existing keys:', getAllKeysRequest.error);
+    };
 
     await new Promise<void>((resolve, reject) => {
       transaction.oncomplete = () => resolve();
