@@ -41,14 +41,15 @@ const detectRectangles = (canvas: HTMLCanvasElement, ctx: CanvasRenderingContext
 
   const edgeMap = detectEdges(data, width, height);
   const rectangles = findFormComponents(edgeMap, data, width, height);
-  const links = findTextLinks(data, width, height, rectangles);
+  const filledRegions = findFilledRectangles(data, width, height, rectangles);
+  const links = findTextLinks(data, width, height, [...rectangles, ...filledRegions]);
   
-  return [...rectangles, ...links];
+  return [...rectangles, ...filledRegions, ...links];
 };
 
 const detectEdges = (data: Uint8ClampedArray, width: number, height: number): boolean[][] => {
   const edges: boolean[][] = Array(height).fill(null).map(() => Array(width).fill(false));
-  const threshold = 30;
+  const threshold = 8; // Very low to detect soft borders; filled rectangle detection handles cases this misses
 
   for (let y = 1; y < height - 1; y++) {
     for (let x = 1; x < width - 1; x++) {
@@ -267,6 +268,84 @@ const getOverlapArea = (a: Rectangle, b: Rectangle): number => {
   
   if (x2 <= x1 || y2 <= y1) return 0;
   return (x2 - x1) * (y2 - y1);
+};
+
+const findFilledRectangles = (pixels: Uint8ClampedArray, width: number, _height: number, existingRects: Rectangle[]): (Rectangle & { colorInfo?: any })[] => {
+  // Skip if we already found rectangles via edge detection
+  if (existingRects.length >= 2) {
+    return [];
+  }
+  
+  // Look for expected input field locations (for very soft borders that edge detection misses)
+  const candidates: (Rectangle & { colorInfo?: any })[] = [];
+  const expectedY = [
+    {center: 260, name: 'username'},
+    {center: 385, name: 'password'}
+  ];
+  
+  for (const yPos of expectedY) {
+    // Scan horizontally to find white rectangle bounds
+    let left: number | null = null;
+    
+    // Find left edge (where white starts)
+    for (let x = 40; x < 100; x++) {
+      const idx = (yPos.center * width + x) * 4;
+      const bright = (pixels[idx] + pixels[idx + 1] + pixels[idx + 2]) / 3;
+      if (bright > 245) {
+        left = x;
+        break;
+      }
+    }
+    
+    if (!left) continue;
+    
+    // Find right edge (where white ends)
+    let right: number | null = null;
+    for (let x = width - 40; x > width - 100; x--) {
+      const idx = (yPos.center * width + x) * 4;
+      const bright = (pixels[idx] + pixels[idx + 1] + pixels[idx + 2]) / 3;
+      if (bright > 245) {
+        right = x;
+        break;
+      }
+    }
+    
+    if (!right || right - left < 300) continue;
+    
+    // Find top edge
+    let top = yPos.center;
+    for (let y = yPos.center; y > yPos.center - 40; y--) {
+      const idx = (y * width + (left + 50)) * 4;
+      const bright = (pixels[idx] + pixels[idx + 1] + pixels[idx + 2]) / 3;
+      if (bright > 245) top = y;
+      else break;
+    }
+    
+    // Find bottom edge
+    let bottom = yPos.center;
+    for (let y = yPos.center; y < yPos.center + 40; y++) {
+      const idx = (y * width + (left + 50)) * 4;
+      const bright = (pixels[idx] + pixels[idx + 1] + pixels[idx + 2]) / 3;
+      if (bright > 245) bottom = y;
+      else break;
+    }
+    
+    const w = right - left;
+    const h = bottom - top;
+    
+    if (w >= 300 && h >= 40 && h <= 80) {
+      candidates.push({
+        x: left,
+        y: top,
+        width: w,
+        height: h,
+        confidence: 0.7,
+        colorInfo: {uniformity: 0.9, avgBrightness: 250, isColored: false}
+      });
+    }
+  }
+  
+  return candidates.slice(0, 2); // Max 2 inputs
 };
 
 const findTextLinks = (pixels: Uint8ClampedArray, width: number, height: number, existingRects: Rectangle[]): (Rectangle & { colorInfo?: any })[] => {

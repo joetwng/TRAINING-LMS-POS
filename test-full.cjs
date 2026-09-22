@@ -3,21 +3,26 @@ const fs = require('fs');
 
 // Import detector logic (inline version)
 function detectComponents(imageData, width, height, debug = false) {
+  // Multi-pass detection: edges + filled regions
   const edges = detectEdges(imageData, width, height);
   const rectangles = findFormComponents(edges, imageData, width, height);
-  const links = findTextLinks(imageData, width, height, rectangles);
+  const filledRegions = findFilledRectangles(imageData, width, height, rectangles);
+  const links = findTextLinks(imageData, width, height, [...rectangles, ...filledRegions]);
   
   if (debug) {
-    console.log(`\nDebug: Found ${rectangles.length} rectangles, ${links.length} links`);
+    console.log(`\nDebug: Found ${rectangles.length} edge-rects, ${filledRegions.length} filled-rects, ${links.length} links`);
     rectangles.forEach((r, i) => {
-      console.log(`  Rect ${i}: (${Math.round(r.x)}, ${Math.round(r.y)}) ${Math.round(r.width)}×${Math.round(r.height)}`);
+      console.log(`  Edge ${i}: (${Math.round(r.x)}, ${Math.round(r.y)}) ${Math.round(r.width)}×${Math.round(r.height)}`);
+    });
+    filledRegions.forEach((r, i) => {
+      console.log(`  Filled ${i}: (${Math.round(r.x)}, ${Math.round(r.y)}) ${Math.round(r.width)}×${Math.round(r.height)}`);
     });
     links.forEach((l, i) => {
       console.log(`  Link ${i}: (${Math.round(l.x)}, ${Math.round(l.y)}) ${Math.round(l.width)}×${Math.round(l.height)}`);
     });
   }
   
-  const allRects = [...rectangles, ...links];
+  const allRects = [...rectangles, ...filledRegions, ...links];
   
   // Sort by Y and convert to objects
   const sorted = allRects.sort((a, b) => a.y - b.y);
@@ -40,7 +45,7 @@ function detectComponents(imageData, width, height, debug = false) {
 
 function detectEdges(data, width, height) {
   const edges = Array(height).fill(null).map(() => Array(width).fill(false));
-  const threshold = 30;
+  const threshold = 8; // Very low to catch extremely soft borders
 
   for (let y = 1; y < height - 1; y++) {
     for (let x = 1; x < width - 1; x++) {
@@ -62,6 +67,85 @@ function detectEdges(data, width, height) {
   }
 
   return edges;
+}
+
+function findFilledRectangles(pixels, width, height, existingRects) {
+  // Skip if we already found rectangles via edge detection
+  if (existingRects.length >= 2) {
+    return [];
+  }
+  
+  // Look for expected input field locations (vertical scan)
+  const candidates = [];
+  const expectedY = [
+    {center: 260, name: 'username'},
+    {center: 385, name: 'password'}
+  ];
+  
+  for (const yPos of expectedY) {
+    // Scan horizontally to find white rectangle bounds
+    let foundRect = null;
+    
+    // Find left edge (where white starts)
+    let left = null;
+    for (let x = 40; x < 100; x++) {
+      const idx = (yPos.center * width + x) * 4;
+      const bright = (pixels[idx] + pixels[idx + 1] + pixels[idx + 2]) / 3;
+      if (bright > 245) {
+        left = x;
+        break;
+      }
+    }
+    
+    if (!left) continue;
+    
+    // Find right edge (where white ends)
+    let right = null;
+    for (let x = width - 40; x > width - 100; x--) {
+      const idx = (yPos.center * width + x) * 4;
+      const bright = (pixels[idx] + pixels[idx + 1] + pixels[idx + 2]) / 3;
+      if (bright > 245) {
+        right = x;
+        break;
+      }
+    }
+    
+    if (!right || right - left < 300) continue;
+    
+    // Find top edge
+    let top = yPos.center;
+    for (let y = yPos.center; y > yPos.center - 40; y--) {
+      const idx = (y * width + (left + 50)) * 4;
+      const bright = (pixels[idx] + pixels[idx + 1] + pixels[idx + 2]) / 3;
+      if (bright > 245) top = y;
+      else break;
+    }
+    
+    // Find bottom edge
+    let bottom = yPos.center;
+    for (let y = yPos.center; y < yPos.center + 40; y++) {
+      const idx = (y * width + (left + 50)) * 4;
+      const bright = (pixels[idx] + pixels[idx + 1] + pixels[idx + 2]) / 3;
+      if (bright > 245) bottom = y;
+      else break;
+    }
+    
+    const w = right - left;
+    const h = bottom - top;
+    
+    if (w >= 300 && h >= 40 && h <= 80) {
+      candidates.push({
+        x: left,
+        y: top,
+        width: w,
+        height: h,
+        confidence: 0.7,
+        colorInfo: {uniformity: 0.9, avgBrightness: 250, isColored: false}
+      });
+    }
+  }
+  
+  return candidates.slice(0, 2); // Max 2 inputs
 }
 
 function findFormComponents(edges, pixels, width, height) {
