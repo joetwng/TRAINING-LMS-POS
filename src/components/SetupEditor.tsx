@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Page, DetectedObject } from '../types';
 import { detectComponents, detectAtPoint } from '../detector';
-import { generateId } from '../storage';
 
 interface SetupEditorProps {
   page: Page;
