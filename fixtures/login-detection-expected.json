@@ -1,0 +1,46 @@
+[
+  {
+    "id": "obj_1",
+    "type": "text",
+    "label": "username_field",
+    "x": 60,
+    "y": 230,
+    "width": 450,
+    "height": 45,
+    "required": false,
+    "maxLength": 100
+  },
+  {
+    "id": "obj_2",
+    "type": "text",
+    "label": "password_field",
+    "x": 60,
+    "y": 355,
+    "width": 450,
+    "height": 45,
+    "required": false,
+    "maxLength": 100
+  },
+  {
+    "id": "obj_3",
+    "type": "button",
+    "label": "sign_in_button",
+    "x": 60,
+    "y": 505,
+    "width": 450,
+    "height": 60,
+    "required": false,
+    "targetPage": null
+  },
+  {
+    "id": "obj_4",
+    "type": "link",
+    "label": "forgot_password_link",
+    "x": 60,
+    "y": 450,
+    "width": 250,
+    "height": 30,
+    "required": false,
+    "targetPage": null
+  }
+]
