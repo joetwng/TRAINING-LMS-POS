@@ -151,6 +151,9 @@ export const SetupEditor: React.FC<SetupEditorProps> = ({
         </button>
         <h1 style={{ fontSize: '24px', fontWeight: 'bold', flex: 1, textAlign: 'center' }}>
           Setup: {page.name}
+          <span style={{ display: 'block', fontSize: '11px', color: '#6c757d', fontWeight: 'normal', marginTop: '4px' }}>
+            build: signin-detect-v2
+          </span>
         </h1>
         <div style={{ width: '100px' }} />
       </div>
