@@ -86,6 +86,19 @@ export const SetupEditor: React.FC<SetupEditorProps> = ({
     setSelectedId(newObj.id);
   };
 
+  const handleClearAll = () => {
+    if (objects.length === 0) {
+      alert('No components to clear.');
+      return;
+    }
+    
+    if (confirm(`Are you sure you want to clear all ${objects.length} component(s)? This action cannot be undone.`)) {
+      setObjects([]);
+      onUpdateObjects([]);
+      setSelectedId(null);
+    }
+  };
+
   const scaleX = imageSize.width / (imageRef.current?.naturalWidth || 1);
   const scaleY = imageSize.height / (imageRef.current?.naturalHeight || 1);
 
@@ -112,7 +125,7 @@ export const SetupEditor: React.FC<SetupEditorProps> = ({
         <div style={{ width: '100px' }} />
       </div>
 
-      <div style={{ display: 'flex', gap: '10px', marginBottom: '20px' }}>
+      <div style={{ display: 'flex', gap: '10px', marginBottom: '20px', flexWrap: 'wrap' }}>
         <button
           onClick={handleAutoDetect}
           disabled={detecting || !page.imageData}
@@ -142,6 +155,21 @@ export const SetupEditor: React.FC<SetupEditorProps> = ({
           }}
         >
           + Add Manual Object
+        </button>
+        <button
+          onClick={handleClearAll}
+          disabled={objects.length === 0}
+          style={{
+            padding: '10px 20px',
+            backgroundColor: objects.length === 0 ? '#ccc' : '#dc3545',
+            color: 'white',
+            border: 'none',
+            borderRadius: '4px',
+            cursor: objects.length === 0 ? 'not-allowed' : 'pointer',
+            fontSize: '14px',
+          }}
+        >
+          🗑 Clear All
         </button>
         <button
           onClick={handleSave}

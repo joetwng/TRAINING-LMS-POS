@@ -9,6 +9,8 @@ A web MVP for creating interactive training flows from screenshots. Upload scree
 - **Auto-Detection**: Automatically detect UI components from screenshots using edge detection algorithms
 - **Component Configuration**: Set properties for each detected component:
   - Type (text, number, password, checkbox, radio, button, select)
+  - Auto-detect produces only: text inputs, checkboxes, radio buttons, and buttons
+  - Other types (number, password, select) available via manual "Add Object"
   - Label and required status
   - Max length for input fields
   - Target page for navigation
@@ -41,10 +43,11 @@ Click "Setup Components" and then "Auto-Detect Components". The system will:
 - Apply edge detection algorithms to find high-contrast boundaries
 - Identify rectangular regions that likely represent UI elements
 - Classify components based on aspect ratio and size heuristics:
-  - Wide, short regions → text inputs
-  - Medium rectangles → buttons
-  - Small squares → checkboxes
-  - Large areas → select dropdowns
+  - Wide, short regions → text inputs (INPUT)
+  - Medium rectangles → buttons (BUTTON)
+  - Small squares → checkboxes (CHECKBOX)
+  - Tall, narrow regions → radio buttons (RADIO)
+- **Note**: Auto-detect is restricted to these 4 types only
 
 ### 4. Configure Objects
 For each detected object:
@@ -71,9 +74,11 @@ The detection system uses a custom heuristic approach:
    - Filters overlapping regions, keeping highest-confidence matches
 
 3. **Type Inference**: Classifies detected rectangles based on geometry
-   - Aspect ratio analysis (wide = input, square = checkbox)
-   - Area thresholds (small = checkbox, large = select)
-   - Height limits (tall = radio, short = text input)
+   - Aspect ratio analysis (wide = text input, medium = button)
+   - Area thresholds (small = checkbox)
+   - Shape analysis (tall/narrow = radio button)
+   - **Auto-detect restricted to**: INPUT (text), RADIO, CHECKBOX, BUTTON only
+   - Other types (number, password, select) must be set manually after detection
 
 ### Known Limitations
 
