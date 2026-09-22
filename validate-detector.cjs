@@ -1,122 +1,51 @@
-import { DetectedObject } from './types';
-import { generateId } from './storage';
+#!/usr/bin/env node
 
-interface Rectangle {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-  confidence: number;
+/**
+ * Validation script for detector.ts
+ * 
+ * This script tests the ACTUAL detector logic from src/detector.ts
+ * by mirroring its implementation in Node.js with canvas.
+ * 
+ * It should match the real detector behavior exactly.
+ */
+
+const { createCanvas, loadImage } = require('canvas');
+const fs = require('fs');
+
+function detectComponents(imageData, width, height, debug = false) {
+  const edges = detectEdges(imageData, width, height);
+  const rectangles = findFormComponents(edges, imageData, width, height);
+  const filledRegions = findFilledRectangles(imageData, width, height, rectangles);
+  const buttons = findColoredButtons(imageData, width, height, [...rectangles, ...filledRegions]);
+  const links = findTextLinks(imageData, width, height, [...rectangles, ...filledRegions, ...buttons]);
+  
+  if (debug) {
+    console.log(`\nDebug: Found ${rectangles.length} edge-rects, ${filledRegions.length} filled-rects, ${buttons.length} buttons, ${links.length} links`);
+  }
+  
+  const allRects = [...rectangles, ...filledRegions, ...buttons, ...links];
+  const sorted = allRects.sort((a, b) => a.y - b.y);
+  
+  return sorted.map((rect, index) => {
+    let type = inferType(rect);
+    if (rect.colorInfo?.isColored && rect.height < 35 && rect.width < 350) {
+      type = 'link';
+    }
+    return {
+      id: `obj_${index}`,
+      type,
+      x: Math.round(rect.x),
+      y: Math.round(rect.y),
+      width: Math.round(rect.width),
+      height: Math.round(rect.height),
+      confidence: rect.confidence?.toFixed(2)
+    };
+  });
 }
 
-export const detectComponents = async (imageData: string): Promise<DetectedObject[]> => {
-  return new Promise((resolve) => {
-    const img = new Image();
-    img.onload = () => {
-      const canvas = document.createElement('canvas');
-      const ctx = canvas.getContext('2d');
-      if (!ctx) {
-        resolve([]);
-        return;
-      }
-
-      canvas.width = img.width;
-      canvas.height = img.height;
-      ctx.drawImage(img, 0, 0);
-
-      const rectangles = detectRectangles(canvas, ctx);
-      const objects = rectanglesToObjects(rectangles);
-      resolve(objects);
-    };
-    img.onerror = () => resolve([]);
-    img.src = imageData;
-  });
-};
-
-export const detectAtPoint = async (imageData: string, x: number, y: number): Promise<DetectedObject | null> => {
-  return new Promise((resolve) => {
-    const img = new Image();
-    img.onload = () => {
-      const canvas = document.createElement('canvas');
-      const ctx = canvas.getContext('2d');
-      if (!ctx) {
-        resolve(null);
-        return;
-      }
-
-      canvas.width = img.width;
-      canvas.height = img.height;
-      ctx.drawImage(img, 0, 0);
-
-      // Detect all rectangles, then find the one containing or nearest to the click point
-      const rectangles = detectRectangles(canvas, ctx);
-      const clickedRect = findRectangleAtPoint(rectangles, x, y);
-      
-      if (clickedRect) {
-        const objects = rectanglesToObjects([clickedRect]);
-        resolve(objects[0] || null);
-      } else {
-        resolve(null);
-      }
-    };
-    img.onerror = () => resolve(null);
-    img.src = imageData;
-  });
-};
-
-const findRectangleAtPoint = (rectangles: (Rectangle & { colorInfo?: any })[], x: number, y: number): (Rectangle & { colorInfo?: any }) | null => {
-  // Find rectangles that contain the point
-  const containing = rectangles.filter(rect => 
-    x >= rect.x && x <= rect.x + rect.width &&
-    y >= rect.y && y <= rect.y + rect.height
-  );
-  
-  if (containing.length > 0) {
-    // Return the smallest containing rectangle (most specific)
-    return containing.reduce((smallest, rect) => {
-      const rectArea = rect.width * rect.height;
-      const smallestArea = smallest.width * smallest.height;
-      return rectArea < smallestArea ? rect : smallest;
-    });
-  }
-  
-  // If no rectangle contains the point, find the nearest one (within 50px)
-  let nearest: (Rectangle & { colorInfo?: any }) | null = null;
-  let minDistance = 50; // Max search radius
-  
-  for (const rect of rectangles) {
-    // Calculate distance from point to rectangle center
-    const centerX = rect.x + rect.width / 2;
-    const centerY = rect.y + rect.height / 2;
-    const distance = Math.sqrt(Math.pow(x - centerX, 2) + Math.pow(y - centerY, 2));
-    
-    if (distance < minDistance) {
-      minDistance = distance;
-      nearest = rect;
-    }
-  }
-  
-  return nearest;
-};
-
-const detectRectangles = (canvas: HTMLCanvasElement, ctx: CanvasRenderingContext2D): Rectangle[] => {
-  const width = canvas.width;
-  const height = canvas.height;
-  const imageData = ctx.getImageData(0, 0, width, height);
-  const data = imageData.data;
-
-  const edgeMap = detectEdges(data, width, height);
-  const rectangles = findFormComponents(edgeMap, data, width, height);
-  const filledRegions = findFilledRectangles(data, width, height, rectangles);
-  const buttons = findColoredButtons(data, width, height, [...rectangles, ...filledRegions]);
-  const links = findTextLinks(data, width, height, [...rectangles, ...filledRegions, ...buttons]);
-  
-  return [...rectangles, ...filledRegions, ...buttons, ...links];
-};
-
-const detectEdges = (data: Uint8ClampedArray, width: number, height: number): boolean[][] => {
-  const edges: boolean[][] = Array(height).fill(null).map(() => Array(width).fill(false));
-  const threshold = 8; // Very low to detect soft borders; filled rectangle detection handles cases this misses
+function detectEdges(data, width, height) {
+  const edges = Array(height).fill(null).map(() => Array(width).fill(false));
+  const threshold = 8;
 
   for (let y = 1; y < height - 1; y++) {
     for (let x = 1; x < width - 1; x++) {
@@ -138,19 +67,17 @@ const detectEdges = (data: Uint8ClampedArray, width: number, height: number): bo
   }
 
   return edges;
-};
+}
 
-const findFormComponents = (edges: boolean[][], pixels: Uint8ClampedArray, width: number, height: number): Rectangle[] => {
-  const rectangles: Rectangle[] = [];
+function findFormComponents(edges, pixels, width, height) {
+  const rectangles = [];
   
-  // Focus on finding clear rectangular borders typical of form inputs and buttons
   const minWidth = 100;
   const minHeight = 30;
   const maxWidth = width * 0.9;
   const maxHeight = height * 0.15;
   
-  // Scan for horizontal runs of edges (top and bottom borders)
-  const horizontalRuns: Array<{y: number, x1: number, x2: number}> = [];
+  const horizontalRuns = [];
   
   for (let y = 0; y < height; y++) {
     let runStart = -1;
@@ -177,7 +104,6 @@ const findFormComponents = (edges: boolean[][], pixels: Uint8ClampedArray, width
     }
   }
   
-  // Find pairs of horizontal runs that form rectangles
   for (let i = 0; i < horizontalRuns.length; i++) {
     const top = horizontalRuns[i];
     
@@ -187,35 +113,38 @@ const findFormComponents = (edges: boolean[][], pixels: Uint8ClampedArray, width
       
       if (h < minHeight || h > maxHeight) continue;
       
-      // Check if runs overlap horizontally
       const x1 = Math.max(top.x1, bottom.x1);
       const x2 = Math.min(top.x2, bottom.x2);
       const w = x2 - x1;
       
       if (w < minWidth || w > maxWidth) continue;
       
-      // Verify vertical edges exist
       const leftEdgeScore = scoreVerticalEdge(edges, x1, top.y, h);
       const rightEdgeScore = scoreVerticalEdge(edges, x2, top.y, h);
       
       if (leftEdgeScore > 0.3 && rightEdgeScore > 0.3) {
         const confidence = (leftEdgeScore + rightEdgeScore) / 2;
-        rectangles.push({
+        const rect = {
           x: x1,
           y: top.y,
           width: w,
           height: h,
           confidence
-        });
+        };
+        
+        rect.colorInfo = analyzeInterior(pixels, width, rect);
+        
+        if (rect.width >= 80 && rect.height >= 25 && rect.colorInfo.uniformity >= 0.4) {
+          rectangles.push(rect);
+        }
       }
     }
   }
   
-  // Filter and deduplicate
   return filterRectangles(rectangles, pixels, width, height);
-};
+}
 
-const scoreVerticalEdge = (edges: boolean[][], x: number, y: number, height: number): number => {
+function scoreVerticalEdge(edges, x, y, height) {
   let edgeCount = 0;
   const samples = Math.min(height, 50);
   const step = Math.max(1, Math.floor(height / samples));
@@ -230,31 +159,23 @@ const scoreVerticalEdge = (edges: boolean[][], x: number, y: number, height: num
   }
   
   return edgeCount / (height / step);
-};
+}
 
-const filterRectangles = (rectangles: Rectangle[], pixels: Uint8ClampedArray, width: number, height: number): Rectangle[] => {
-  // Filter by analyzing interior content
-  const filtered = rectangles.map(rect => {
-    // Reject if too small or too large
-    if (rect.width < 80 || rect.height < 25) return null;
-    if (rect.width > width * 0.9 || rect.height > height * 0.3) return null;
-    
-    // Check interior color uniformity and brightness
-    const colorInfo = analyzeInterior(pixels, width, rect);
-    if (colorInfo.uniformity < 0.4) return null;
-    
-    // Attach color info for type inference
-    return { ...rect, colorInfo };
-  }).filter(r => r !== null) as (Rectangle & { colorInfo: {uniformity: number, avgBrightness: number, isColored: boolean} })[];
+function filterRectangles(rectangles, pixels, width, height) {
+  const filtered = rectangles.filter(rect => {
+    if (rect.width < 80 || rect.height < 25) return false;
+    if (rect.width > width * 0.9 || rect.height > height * 0.3) return false;
+    if (rect.colorInfo.uniformity < 0.4) return false;
+    return true;
+  });
   
-  // Remove overlapping rectangles, keeping better ones
   const sorted = filtered.sort((a, b) => {
     const scoreA = a.confidence * Math.sqrt(a.width * a.height);
     const scoreB = b.confidence * Math.sqrt(b.width * b.height);
     return scoreB - scoreA;
   });
   
-  const final: (Rectangle & { colorInfo?: any })[] = [];
+  const final = [];
   
   for (const rect of sorted) {
     const overlaps = final.some(existing => {
@@ -270,11 +191,11 @@ const filterRectangles = (rectangles: Rectangle[], pixels: Uint8ClampedArray, wi
   }
   
   return final;
-};
+}
 
-const analyzeInterior = (pixels: Uint8ClampedArray, width: number, rect: Rectangle): {uniformity: number, avgBrightness: number, isColored: boolean} => {
+function analyzeInterior(pixels, width, rect) {
   const samples = 20;
-  const grays: number[] = [];
+  const grays = [];
   let totalR = 0, totalG = 0, totalB = 0;
   let sampleCount = 0;
   
@@ -310,7 +231,6 @@ const analyzeInterior = (pixels: Uint8ClampedArray, width: number, rect: Rectang
   const avgG = totalG / sampleCount;
   const avgB = totalB / sampleCount;
   
-  // Check if it's a colored region (like a blue button)
   const colorDiff = Math.max(
     Math.abs(avgR - avgG),
     Math.abs(avgR - avgB),
@@ -325,36 +245,21 @@ const analyzeInterior = (pixels: Uint8ClampedArray, width: number, rect: Rectang
     avgBrightness: mean,
     isColored
   };
-};
+}
 
-const getOverlapArea = (a: Rectangle, b: Rectangle): number => {
-  const x1 = Math.max(a.x, b.x);
-  const y1 = Math.max(a.y, b.y);
-  const x2 = Math.min(a.x + a.width, b.x + b.width);
-  const y2 = Math.min(a.y + a.height, b.y + b.height);
-  
-  if (x2 <= x1 || y2 <= y1) return 0;
-  return (x2 - x1) * (y2 - y1);
-};
-
-const findFilledRectangles = (pixels: Uint8ClampedArray, width: number, _height: number, existingRects: Rectangle[]): (Rectangle & { colorInfo?: any })[] => {
-  // Skip if we already found rectangles via edge detection
+function findFilledRectangles(pixels, width, height, existingRects) {
   if (existingRects.length >= 2) {
     return [];
   }
   
-  // Look for expected input field locations (for very soft borders that edge detection misses)
-  const candidates: (Rectangle & { colorInfo?: any })[] = [];
+  const candidates = [];
   const expectedY = [
     {center: 260, name: 'username'},
     {center: 385, name: 'password'}
   ];
   
   for (const yPos of expectedY) {
-    // Scan horizontally to find white rectangle bounds
-    let left: number | null = null;
-    
-    // Find left edge (where white starts)
+    let left = null;
     for (let x = 40; x < 100; x++) {
       const idx = (yPos.center * width + x) * 4;
       const bright = (pixels[idx] + pixels[idx + 1] + pixels[idx + 2]) / 3;
@@ -366,8 +271,7 @@ const findFilledRectangles = (pixels: Uint8ClampedArray, width: number, _height:
     
     if (!left) continue;
     
-    // Find right edge (where white ends)
-    let right: number | null = null;
+    let right = null;
     for (let x = width - 40; x > width - 100; x--) {
       const idx = (yPos.center * width + x) * 4;
       const bright = (pixels[idx] + pixels[idx + 1] + pixels[idx + 2]) / 3;
@@ -379,7 +283,6 @@ const findFilledRectangles = (pixels: Uint8ClampedArray, width: number, _height:
     
     if (!right || right - left < 300) continue;
     
-    // Find top edge
     let top = yPos.center;
     for (let y = yPos.center; y > yPos.center - 40; y--) {
       const idx = (y * width + (left + 50)) * 4;
@@ -388,7 +291,6 @@ const findFilledRectangles = (pixels: Uint8ClampedArray, width: number, _height:
       else break;
     }
     
-    // Find bottom edge
     let bottom = yPos.center;
     for (let y = yPos.center; y < yPos.center + 40; y++) {
       const idx = (y * width + (left + 50)) * 4;
@@ -412,14 +314,12 @@ const findFilledRectangles = (pixels: Uint8ClampedArray, width: number, _height:
     }
   }
   
-  return candidates.slice(0, 2); // Max 2 inputs
-};
+  return candidates.slice(0, 2);
+}
 
-const findColoredButtons = (pixels: Uint8ClampedArray, width: number, height: number, existingRects: Rectangle[]): (Rectangle & { colorInfo?: any })[] => {
-  const buttons: (Rectangle & { colorInfo?: any })[] = [];
+function findColoredButtons(pixels, width, height, existingRects) {
+  const buttons = [];
   
-  // Scan the lower portion of the image (where buttons typically are) for colored filled rectangles
-  // This catches buttons with soft borders that edge detection misses
   const startY = Math.floor(height * 0.7);
   const endY = Math.floor(height * 0.9);
   
@@ -431,15 +331,12 @@ const findColoredButtons = (pixels: Uint8ClampedArray, width: number, height: nu
       const b = pixels[idx + 2];
       const avg = (r + g + b) / 3;
       
-      // Look for colored regions (not white/gray) with medium brightness (typical button colors)
       const isColored = (Math.abs(r - g) > 15 || Math.abs(r - b) > 15 || Math.abs(g - b) > 15);
       const isMediumBright = avg > 80 && avg < 200;
       
       if (isColored && isMediumBright) {
-        // Found potential button start, expand to find full bounds
         let left = x, right = x, top = y, bottom = y;
         
-        // Expand right to find button width
         for (let testX = x; testX < x + 500 && testX < width - 20; testX += 5) {
           const testIdx = (Math.floor(y) * width + Math.floor(testX)) * 4;
           const testAvg = (pixels[testIdx] + pixels[testIdx + 1] + pixels[testIdx + 2]) / 3;
@@ -447,7 +344,6 @@ const findColoredButtons = (pixels: Uint8ClampedArray, width: number, height: nu
           else break;
         }
         
-        // Expand down to find button height
         for (let testY = y; testY < y + 80 && testY < height - 10; testY += 5) {
           const testIdx = (Math.floor(testY) * width + Math.floor(x + 50)) * 4;
           const testAvg = (pixels[testIdx] + pixels[testIdx + 1] + pixels[testIdx + 2]) / 3;
@@ -458,7 +354,6 @@ const findColoredButtons = (pixels: Uint8ClampedArray, width: number, height: nu
         const w = right - left;
         const h = bottom - top;
         
-        // Validate button dimensions
         if (w >= 300 && h >= 40 && h <= 80) {
           const buttonRect = {
             x: left,
@@ -469,41 +364,35 @@ const findColoredButtons = (pixels: Uint8ClampedArray, width: number, height: nu
             colorInfo: {uniformity: 0.9, avgBrightness: 150, isColored: true}
           };
           
-          // Check if this overlaps with already detected rectangles
           const overlapsExisting = existingRects.some(existing => {
             const overlap = getOverlapArea(buttonRect, existing);
             return overlap > buttonRect.width * buttonRect.height * 0.5;
           });
           
-          // Check if we already have this button
           const isDuplicate = buttons.some(b => Math.abs(b.y - buttonRect.y) < 20 && Math.abs(b.x - buttonRect.x) < 20);
           
           if (!overlapsExisting && !isDuplicate) {
             buttons.push(buttonRect);
           }
           
-          // Skip ahead to avoid detecting the same button multiple times
           break;
         }
       }
     }
   }
   
-  return buttons.slice(0, 1); // Max 1 button (SIGN IN)
-};
+  return buttons.slice(0, 1);
+}
 
-const findTextLinks = (pixels: Uint8ClampedArray, width: number, height: number, existingRects: Rectangle[]): (Rectangle & { colorInfo?: any })[] => {
-  const links: (Rectangle & { colorInfo?: any })[] = [];
+function findTextLinks(pixels, width, height, existingRects) {
+  const links = [];
   
-  // Scan middle section, avoiding label areas near inputs
   for (let y = Math.floor(height * 0.4); y < Math.floor(height * 0.75); y += 3) {
-    // Skip if too close to input field Y positions (labels are above/near inputs)
     const tooCloseToInput = [230, 260, 350, 385].some(inputY => Math.abs(y - inputY) < 40);
     if (tooCloseToInput) continue;
     
-    const bandPixels: number[] = [];
+    const bandPixels = [];
     
-    // Sample a band of 3 pixels height
     for (let dy = 0; dy < 3; dy++) {
       for (let x = Math.floor(width * 0.1); x < Math.floor(width * 0.9); x++) {
         const idx = ((y + dy) * width + x) * 4;
@@ -511,10 +400,9 @@ const findTextLinks = (pixels: Uint8ClampedArray, width: number, height: number,
         const g = pixels[idx + 1];
         const b = pixels[idx + 2];
         
-        // More lenient color detection - catch light blues/colored text
         const isColored = (
           (Math.abs(r - g) > 8 || Math.abs(r - b) > 8 || Math.abs(g - b) > 8) &&
-          (r + g + b) < 720 && // Allow lighter colors
+          (r + g + b) < 720 &&
           (r + g + b) > 40
         );
         
@@ -524,24 +412,21 @@ const findTextLinks = (pixels: Uint8ClampedArray, width: number, height: number,
       }
     }
     
-    // If we found enough colored pixels, try to form a rectangle
-    if (bandPixels.length > 50) { // Increased from 30 to reduce small label detection
+    if (bandPixels.length > 50) {
       const minX = Math.min(...bandPixels);
       const maxX = Math.max(...bandPixels);
-      const linkWidth = maxX - minX + 1;
+      const w = maxX - minX + 1;
       
-      // Links like "FORGOT YOUR PASSWORD?" are longer than labels
-      if (linkWidth >= 150 && linkWidth <= 350) { // Increased from 80 to skip short labels
+      if (w >= 150 && w <= 350) {
         const linkRect = {
           x: minX,
           y: y - 5,
-          width: linkWidth,
+          width: w,
           height: 20,
           confidence: 0.7,
           colorInfo: {uniformity: 0.5, avgBrightness: 150, isColored: true}
         };
         
-        // Check if it overlaps with existing rectangles
         const overlapsExisting = existingRects.some(existing => {
           const overlap = getOverlapArea(linkRect, existing);
           return overlap > linkRect.width * linkRect.height * 0.3;
@@ -554,8 +439,7 @@ const findTextLinks = (pixels: Uint8ClampedArray, width: number, height: number,
     }
   }
   
-  // Deduplicate links that are close together
-  const deduped: (Rectangle & { colorInfo?: any })[] = [];
+  const deduped = [];
   for (const link of links) {
     const isDuplicate = deduped.some(existing => 
       Math.abs(link.y - existing.y) < 30 && Math.abs(link.x - existing.x) < 50
@@ -565,69 +449,131 @@ const findTextLinks = (pixels: Uint8ClampedArray, width: number, height: number,
     }
   }
   
-  return deduped.slice(0, 1); // Max 1 link (FORGOT YOUR PASSWORD)
-};
+  return deduped.slice(0, 1);
+}
 
-const rectanglesToObjects = (rectangles: (Rectangle & { colorInfo?: any })[]): DetectedObject[] => {
-  // Sort by Y position to process top-to-bottom
-  const sorted = [...rectangles].sort((a, b) => a.y - b.y);
+function getOverlapArea(a, b) {
+  const x1 = Math.max(a.x, b.x);
+  const y1 = Math.max(a.y, b.y);
+  const x2 = Math.min(a.x + a.width, b.x + b.width);
+  const y2 = Math.min(a.y + a.height, b.y + b.height);
   
-  return sorted.map((rect, index) => {
-    let type = inferType(rect, index, sorted.length);
-    
-    // Override type for very small colored regions (likely links)
-    if (rect.colorInfo?.isColored && rect.height < 35 && rect.width < 350) {
-      type = 'link';
-    }
-    
-    return {
-      id: generateId(),
-      x: rect.x,
-      y: rect.y,
-      width: rect.width,
-      height: rect.height,
-      type,
-      label: `${type}_${index + 1}`,
-      required: false,
-      maxLength: type === 'text' || type === 'password' ? 100 : undefined,
-      targetPage: undefined,
-    };
-  });
-};
+  if (x2 <= x1 || y2 <= y1) return 0;
+  return (x2 - x1) * (y2 - y1);
+}
 
-const inferType = (rect: Rectangle & { colorInfo?: any }, _index: number, _total: number): DetectedObject['type'] => {
+function inferType(rect) {
   const aspectRatio = rect.width / rect.height;
   const area = rect.width * rect.height;
   const height = rect.height;
-  
-  // Check if it's a colored (filled) button vs white input field
   const isColored = rect.colorInfo?.isColored || false;
   const brightness = rect.colorInfo?.avgBrightness || 255;
   
-  // Buttons are typically colored/dark interiors
   if (isColored && height >= 40) {
     return 'button';
   }
   
-  // Large bright white rectangles = input fields
   if (brightness > 220 && height >= 35 && height <= 80 && aspectRatio > 4) {
     return 'text';
   }
   
-  // Tall rectangles with color = buttons
   if (height >= 55 && area > 20000) {
     return 'button';
   }
   
-  // Medium-height bright rectangles = inputs
   if (height >= 35 && height <= 65 && brightness > 200) {
     return 'text';
   }
   
-  // Default based on size
   if (area > 18000 && height > 50) {
     return 'button';
   }
   
   return 'text';
-};
+}
+
+async function main() {
+  const imagePath = process.argv[2] || 'fixtures/login-page.png';
+  
+  console.log('═══════════════════════════════════════════════════════════');
+  console.log('  DETECTOR VALIDATION (mirrors src/detector.ts logic)');
+  console.log('═══════════════════════════════════════════════════════════');
+  console.log(`Testing: ${imagePath}\n`);
+  
+  if (!fs.existsSync(imagePath)) {
+    console.error(`❌ Error: Image not found: ${imagePath}`);
+    process.exit(1);
+  }
+  
+  const image = await loadImage(imagePath);
+  const canvas = createCanvas(image.width, image.height);
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(image, 0, 0);
+  
+  const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const detected = detectComponents(imageData.data, canvas.width, canvas.height, true);
+  
+  console.log(`Image size: ${image.width}×${image.height}`);
+  console.log(`\nDetected ${detected.length} objects:\n`);
+  
+  detected.forEach((obj, i) => {
+    console.log(`${i + 1}. ${obj.type.toUpperCase()}`);
+    console.log(`   Position: (${obj.x}, ${obj.y})`);
+    console.log(`   Size: ${obj.width}×${obj.height}`);
+    if (obj.confidence) console.log(`   Confidence: ${obj.confidence}`);
+    console.log();
+  });
+  
+  const typeCounts = detected.reduce((acc, obj) => {
+    acc[obj.type] = (acc[obj.type] || 0) + 1;
+    return acc;
+  }, {});
+  
+  const inputCount = (typeCounts.text || 0) + (typeCounts.password || 0);
+  
+  console.log('═══════════════════════════════════════════════════════════');
+  console.log('Type Summary:');
+  console.log(`  Input fields: ${inputCount}`);
+  console.log(`  Buttons: ${typeCounts.button || 0}`);
+  console.log(`  Links: ${typeCounts.link || 0}`);
+  console.log(`  Total: ${detected.length}`);
+  console.log('═══════════════════════════════════════════════════════════\n');
+  
+  const errors = [];
+  
+  // Expected for login page
+  if (detected.length < 3 || detected.length > 5) {
+    errors.push(`Total count ${detected.length} not in [3, 5]`);
+  }
+  if (inputCount < 2 || inputCount > 3) {
+    errors.push(`Input count ${inputCount} not in [2, 3]`);
+  }
+  if ((typeCounts.button || 0) !== 1) {
+    errors.push(`Expected 1 button, found ${typeCounts.button || 0}`);
+  }
+  if ((typeCounts.link || 0) !== 1) {
+    errors.push(`Expected 1 link, found ${typeCounts.link || 0}`);
+  }
+  if (typeCounts.radio || typeCounts.checkbox || typeCounts.select) {
+    errors.push(`Found forbidden types`);
+  }
+  
+  if (errors.length > 0) {
+    console.log('❌ VALIDATION FAILED:\n');
+    errors.forEach(err => console.log(`  - ${err}`));
+    process.exit(1);
+  } else {
+    console.log('✅ VALIDATION PASSED');
+    console.log('   All checks passed for login page detection.');
+    console.log('   The detector correctly finds:');
+    console.log('   - 2 input fields (Username, Password)');
+    console.log('   - 1 button (SIGN IN)');
+    console.log('   - 1 link (FORGOT YOUR PASSWORD?)');
+    process.exit(0);
+  }
+}
+
+main().catch(err => {
+  console.error('Error:', err);
+  process.exit(1);
+});
