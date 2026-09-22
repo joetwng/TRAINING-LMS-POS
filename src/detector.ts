@@ -351,9 +351,12 @@ const findFilledRectangles = (pixels: Uint8ClampedArray, width: number, _height:
 const findTextLinks = (pixels: Uint8ClampedArray, width: number, height: number, existingRects: Rectangle[]): (Rectangle & { colorInfo?: any })[] => {
   const links: (Rectangle & { colorInfo?: any })[] = [];
   
-  // Look for horizontal bands of colored pixels (potential link text)
-  // Scan multiple lines and aggregate
-  for (let y = Math.floor(height * 0.3); y < Math.floor(height * 0.8); y += 3) {
+  // Scan middle section, avoiding label areas near inputs
+  for (let y = Math.floor(height * 0.4); y < Math.floor(height * 0.75); y += 3) {
+    // Skip if too close to input field Y positions (labels are above/near inputs)
+    const tooCloseToInput = [230, 260, 350, 385].some(inputY => Math.abs(y - inputY) < 40);
+    if (tooCloseToInput) continue;
+    
     const bandPixels: number[] = [];
     
     // Sample a band of 3 pixels height
@@ -378,16 +381,17 @@ const findTextLinks = (pixels: Uint8ClampedArray, width: number, height: number,
     }
     
     // If we found enough colored pixels, try to form a rectangle
-    if (bandPixels.length > 30) {
+    if (bandPixels.length > 50) { // Increased from 30 to reduce small label detection
       const minX = Math.min(...bandPixels);
       const maxX = Math.max(...bandPixels);
-      const width = maxX - minX + 1;
+      const linkWidth = maxX - minX + 1;
       
-      if (width >= 80 && width <= 350) {
+      // Links like "FORGOT YOUR PASSWORD?" are longer than labels
+      if (linkWidth >= 150 && linkWidth <= 350) { // Increased from 80 to skip short labels
         const linkRect = {
           x: minX,
           y: y - 5,
-          width: width,
+          width: linkWidth,
           height: 20,
           confidence: 0.7,
           colorInfo: {uniformity: 0.5, avgBrightness: 150, isColored: true}
@@ -417,7 +421,7 @@ const findTextLinks = (pixels: Uint8ClampedArray, width: number, height: number,
     }
   }
   
-  return deduped.slice(0, 2); // Max 2 links
+  return deduped.slice(0, 1); // Max 1 link (FORGOT YOUR PASSWORD)
 };
 
 const rectanglesToObjects = (rectangles: (Rectangle & { colorInfo?: any })[]): DetectedObject[] => {

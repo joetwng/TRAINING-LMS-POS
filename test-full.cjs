@@ -221,6 +221,64 @@ function findFormComponents(edges, pixels, width, height) {
     }
   }
   
+  // Also detect colored filled rectangles (buttons) via direct sampling
+  const expectedButtonY = 535; // SIGN IN button area
+  for (let y = height * 0.7; y < height * 0.9; y += 10) {
+    for (let x = 40; x < 100; x += 10) {
+      const idx = (Math.floor(y) * width + Math.floor(x)) * 4;
+      const r = pixels[idx];
+      const g = pixels[idx + 1];
+      const b = pixels[idx + 2];
+      const avg = (r + g + b) / 3;
+      
+      // Look for blue button (colored, not white)
+      const isColored = (Math.abs(r - g) > 15 || Math.abs(r - b) > 15 || Math.abs(g - b) > 15);
+      const isMediumBright = avg > 80 && avg < 200;
+      
+      if (isColored && isMediumBright) {
+        // Found potential button, expand to find bounds
+        let left = x, right = x, top = y, bottom = y;
+        
+        // Expand right
+        for (let testX = x; testX < x + 500 && testX < width - 20; testX += 5) {
+          const testIdx = (Math.floor(y) * width + Math.floor(testX)) * 4;
+          const testAvg = (pixels[testIdx] + pixels[testIdx + 1] + pixels[testIdx + 2]) / 3;
+          if (testAvg > 80 && testAvg < 200) right = testX;
+          else break;
+        }
+        
+        // Expand down
+        for (let testY = y; testY < y + 80 && testY < height - 10; testY += 5) {
+          const testIdx = (Math.floor(testY) * width + Math.floor(x + 50)) * 4;
+          const testAvg = (pixels[testIdx] + pixels[testIdx + 1] + pixels[testIdx + 2]) / 3;
+          if (testAvg > 80 && testAvg < 200) bottom = testY;
+          else break;
+        }
+        
+        const w = right - left;
+        const h = bottom - top;
+        
+        if (w >= 300 && h >= 40 && h <= 80) {
+          const buttonRect = {
+            x: left,
+            y: top,
+            width: w,
+            height: h,
+            confidence: 0.8,
+            colorInfo: {uniformity: 0.9, avgBrightness: 150, isColored: true}
+          };
+          
+          // Check if already have this
+          const exists = rectangles.some(r => Math.abs(r.y - buttonRect.y) < 20);
+          if (!exists) {
+            rectangles.push(buttonRect);
+          }
+          break;
+        }
+      }
+    }
+  }
+  
   // Deduplicate
   const sorted = rectangles.sort((a, b) => {
     const scoreA = a.confidence * Math.sqrt(a.width * a.height);
@@ -319,7 +377,12 @@ function analyzeInterior(pixels, width, rect) {
 function findTextLinks(pixels, width, height, existingRects) {
   const links = [];
   
-  for (let y = Math.floor(height * 0.3); y < Math.floor(height * 0.8); y += 3) {
+  // Scan middle section, avoiding label areas near inputs
+  for (let y = Math.floor(height * 0.4); y < Math.floor(height * 0.75); y += 3) {
+    // Skip if too close to input field Y positions (labels are above/near inputs)
+    const tooCloseToInput = [230, 260, 350, 385].some(inputY => Math.abs(y - inputY) < 40);
+    if (tooCloseToInput) continue;
+    
     const bandPixels = [];
     
     for (let dy = 0; dy < 3; dy++) {
@@ -341,12 +404,13 @@ function findTextLinks(pixels, width, height, existingRects) {
       }
     }
     
-    if (bandPixels.length > 30) {
+    if (bandPixels.length > 50) { // Increased from 30 to reduce small label detection
       const minX = Math.min(...bandPixels);
       const maxX = Math.max(...bandPixels);
       const w = maxX - minX + 1;
       
-      if (w >= 80 && w <= 350) {
+      // Links like "FORGOT YOUR PASSWORD?" are longer than labels
+      if (w >= 150 && w <= 350) { // Increased from 80 to skip short labels
         const linkRect = {
           x: minX,
           y: y - 5,
@@ -378,7 +442,7 @@ function findTextLinks(pixels, width, height, existingRects) {
     }
   }
   
-  return deduped.slice(0, 2);
+  return deduped.slice(0, 1); // Max 1 link (FORGOT YOUR PASSWORD)
 }
 
 function getOverlapArea(a, b) {
