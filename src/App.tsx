@@ -15,6 +15,11 @@ function App() {
   const [isLoading, setIsLoading] = useState(true);
   const [saveError, setSaveError] = useState<string | null>(null);
   const saveTimeoutRef = useRef<number | null>(null);
+  const pagesRef = useRef<Page[]>([]);
+
+  useEffect(() => {
+    pagesRef.current = pages;
+  }, [pages]);
 
   useEffect(() => {
     const load = async () => {
@@ -29,6 +34,44 @@ function App() {
       }
     };
     load();
+  }, []);
+
+  const flushSave = async () => {
+    if (saveTimeoutRef.current !== null) {
+      clearTimeout(saveTimeoutRef.current);
+      saveTimeoutRef.current = null;
+    }
+    try {
+      await savePages(pagesRef.current);
+      setSaveError(null);
+    } catch (error) {
+      console.error('Failed to save pages:', error);
+      setSaveError('Failed to save changes. Your work may not be persisted.');
+    }
+  };
+
+  useEffect(() => {
+    const handlePageHide = () => {
+      if (pagesRef.current.length > 0) {
+        flushSave();
+      }
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden' && pagesRef.current.length > 0) {
+        flushSave();
+      }
+    };
+
+    window.addEventListener('pagehide', handlePageHide);
+    window.addEventListener('beforeunload', handlePageHide);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      window.removeEventListener('pagehide', handlePageHide);
+      window.removeEventListener('beforeunload', handlePageHide);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
   }, []);
 
   useEffect(() => {
@@ -64,7 +107,11 @@ function App() {
       objects: [],
       createdAt: Date.now(),
     };
-    setPages(prev => [...prev, newPage]);
+    setPages(prev => {
+      const updated = [...prev, newPage];
+      setTimeout(() => flushSave(), 0);
+      return updated;
+    });
   };
 
   const handleDeletePage = (pageId: string) => {
@@ -86,9 +133,13 @@ function App() {
 
   const handleUploadImage = (imageData: string) => {
     if (!currentPageId) return;
-    setPages(prev => prev.map(p => 
-      p.id === currentPageId ? { ...p, imageData } : p
-    ));
+    setPages(prev => {
+      const updated = prev.map(p => 
+        p.id === currentPageId ? { ...p, imageData } : p
+      );
+      setTimeout(() => flushSave(), 0);
+      return updated;
+    });
   };
 
   const handleUpdateObjects = (objects: DetectedObject[]) => {
