@@ -36,13 +36,15 @@ function App() {
     load();
   }, []);
 
-  const flushSave = async () => {
+  const flushSave = async (pagesToSave?: Page[]) => {
     if (saveTimeoutRef.current !== null) {
       clearTimeout(saveTimeoutRef.current);
       saveTimeoutRef.current = null;
     }
+    const payload = pagesToSave ?? pagesRef.current;
+    pagesRef.current = payload;
     try {
-      await savePages(pagesRef.current);
+      await savePages(payload);
       setSaveError(null);
     } catch (error) {
       console.error('Failed to save pages:', error);
@@ -109,7 +111,8 @@ function App() {
     };
     setPages(prev => {
       const updated = [...prev, newPage];
-      setTimeout(() => flushSave(), 0);
+      pagesRef.current = updated;
+      void flushSave(updated);
       return updated;
     });
   };
@@ -117,7 +120,8 @@ function App() {
   const handleDeletePage = (pageId: string) => {
     setPages(prev => {
       const updated = prev.filter(p => p.id !== pageId);
-      setTimeout(() => flushSave(), 0);
+      pagesRef.current = updated;
+      void flushSave(updated);
       return updated;
     });
     if (currentPageId === pageId) {
@@ -129,7 +133,8 @@ function App() {
   const handleRenamePage = (pageId: string, newName: string) => {
     setPages(prev => {
       const updated = prev.map(p => p.id === pageId ? { ...p, name: newName } : p);
-      setTimeout(() => flushSave(), 0);
+      pagesRef.current = updated;
+      void flushSave(updated);
       return updated;
     });
   };
@@ -142,10 +147,11 @@ function App() {
   const handleUploadImage = (imageData: string) => {
     if (!currentPageId) return;
     setPages(prev => {
-      const updated = prev.map(p => 
+      const updated = prev.map(p =>
         p.id === currentPageId ? { ...p, imageData } : p
       );
-      setTimeout(() => flushSave(), 0);
+      pagesRef.current = updated;
+      void flushSave(updated);
       return updated;
     });
   };
@@ -153,10 +159,11 @@ function App() {
   const handleUpdateObjects = (objects: DetectedObject[]) => {
     if (!currentPageId) return;
     setPages(prev => {
-      const updated = prev.map(p => 
+      const updated = prev.map(p =>
         p.id === currentPageId ? { ...p, objects } : p
       );
-      setTimeout(() => flushSave(), 0);
+      pagesRef.current = updated;
+      void flushSave(updated);
       return updated;
     });
   };
