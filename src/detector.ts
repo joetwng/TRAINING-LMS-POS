@@ -33,6 +33,72 @@ export const detectComponents = async (imageData: string): Promise<DetectedObjec
   });
 };
 
+export const detectAtPoint = async (imageData: string, x: number, y: number): Promise<DetectedObject | null> => {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
+      if (!ctx) {
+        resolve(null);
+        return;
+      }
+
+      canvas.width = img.width;
+      canvas.height = img.height;
+      ctx.drawImage(img, 0, 0);
+
+      // Detect all rectangles, then find the one containing or nearest to the click point
+      const rectangles = detectRectangles(canvas, ctx);
+      const clickedRect = findRectangleAtPoint(rectangles, x, y);
+      
+      if (clickedRect) {
+        const objects = rectanglesToObjects([clickedRect]);
+        resolve(objects[0] || null);
+      } else {
+        resolve(null);
+      }
+    };
+    img.onerror = () => resolve(null);
+    img.src = imageData;
+  });
+};
+
+const findRectangleAtPoint = (rectangles: (Rectangle & { colorInfo?: any })[], x: number, y: number): (Rectangle & { colorInfo?: any }) | null => {
+  // Find rectangles that contain the point
+  const containing = rectangles.filter(rect => 
+    x >= rect.x && x <= rect.x + rect.width &&
+    y >= rect.y && y <= rect.y + rect.height
+  );
+  
+  if (containing.length > 0) {
+    // Return the smallest containing rectangle (most specific)
+    return containing.reduce((smallest, rect) => {
+      const rectArea = rect.width * rect.height;
+      const smallestArea = smallest.width * smallest.height;
+      return rectArea < smallestArea ? rect : smallest;
+    });
+  }
+  
+  // If no rectangle contains the point, find the nearest one (within 50px)
+  let nearest: (Rectangle & { colorInfo?: any }) | null = null;
+  let minDistance = 50; // Max search radius
+  
+  for (const rect of rectangles) {
+    // Calculate distance from point to rectangle center
+    const centerX = rect.x + rect.width / 2;
+    const centerY = rect.y + rect.height / 2;
+    const distance = Math.sqrt(Math.pow(x - centerX, 2) + Math.pow(y - centerY, 2));
+    
+    if (distance < minDistance) {
+      minDistance = distance;
+      nearest = rect;
+    }
+  }
+  
+  return nearest;
+};
+
 const detectRectangles = (canvas: HTMLCanvasElement, ctx: CanvasRenderingContext2D): Rectangle[] => {
   const width = canvas.width;
   const height = canvas.height;

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Page, DetectedObject } from '../types';
-import { detectComponents } from '../detector';
+import { detectComponents, detectAtPoint } from '../detector';
 import { generateId } from '../storage';
 
 interface SetupEditorProps {
@@ -19,6 +19,9 @@ export const SetupEditor: React.FC<SetupEditorProps> = ({
   const [objects, setObjects] = useState<DetectedObject[]>(page.objects);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detecting, setDetecting] = useState(false);
+  const [clickDetectMode, setClickDetectMode] = useState(false);
+  const [detectingAtPoint, setDetectingAtPoint] = useState(false);
+  const [detectMessage, setDetectMessage] = useState<string | null>(null);
   const [imageSize, setImageSize] = useState({ width: 0, height: 0 });
   const imageRef = useRef<HTMLImageElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -70,20 +73,48 @@ export const SetupEditor: React.FC<SetupEditorProps> = ({
     if (selectedId === id) setSelectedId(null);
   };
 
-  const addNewObject = () => {
-    const newObj: DetectedObject = {
-      id: generateId(),
-      x: 50,
-      y: 50,
-      width: 150,
-      height: 40,
-      type: 'button',
-      label: `new_object_${objects.length + 1}`,
-      required: false,
-      targetPage: undefined,
-    };
-    setObjects(prev => [...prev, newObj]);
-    setSelectedId(newObj.id);
+  const toggleClickDetectMode = () => {
+    setClickDetectMode(!clickDetectMode);
+    setDetectMessage(null);
+  };
+
+  const handleImageClick = async (e: React.MouseEvent<HTMLDivElement>) => {
+    if (!clickDetectMode || !page.imageData || !imageRef.current) return;
+    
+    setDetectingAtPoint(true);
+    setDetectMessage(null);
+    
+    // Get click coordinates relative to the image
+    const rect = imageRef.current.getBoundingClientRect();
+    const clickX = e.clientX - rect.left;
+    const clickY = e.clientY - rect.top;
+    
+    // Convert from display coordinates to natural image coordinates
+    const scaleX = imageRef.current.naturalWidth / imageRef.current.offsetWidth;
+    const scaleY = imageRef.current.naturalHeight / imageRef.current.offsetHeight;
+    const naturalX = clickX * scaleX;
+    const naturalY = clickY * scaleY;
+    
+    try {
+      const detected = await detectAtPoint(page.imageData, naturalX, naturalY);
+      
+      if (detected) {
+        // Add the detected object to the list
+        setObjects(prev => [...prev, detected]);
+        setSelectedId(detected.id);
+        setDetectMessage('✓ Control detected!');
+        setTimeout(() => setDetectMessage(null), 2000);
+      } else {
+        setDetectMessage('✗ No control found at that location. Try clicking on a button, input field, or link.');
+        setTimeout(() => setDetectMessage(null), 4000);
+      }
+    } catch (error) {
+      console.error('Detection error:', error);
+      setDetectMessage('✗ Detection failed. Please try again.');
+      setTimeout(() => setDetectMessage(null), 3000);
+    } finally {
+      setDetectingAtPoint(false);
+    }
   };
 
   const handleClearAll = () => {
@@ -143,18 +174,20 @@ export const SetupEditor: React.FC<SetupEditorProps> = ({
           {detecting ? 'Detecting...' : '🔍 Auto-Detect Components'}
         </button>
         <button
-          onClick={addNewObject}
+          onClick={toggleClickDetectMode}
+          disabled={!page.imageData}
           style={{
             padding: '10px 20px',
-            backgroundColor: '#28a745',
-            color: 'white',
-            border: 'none',
+            backgroundColor: clickDetectMode ? '#ffc107' : '#28a745',
+            color: clickDetectMode ? '#000' : 'white',
+            border: clickDetectMode ? '2px solid #ff9800' : 'none',
             borderRadius: '4px',
-            cursor: 'pointer',
+            cursor: !page.imageData ? 'not-allowed' : 'pointer',
             fontSize: '14px',
+            fontWeight: clickDetectMode ? 'bold' : 'normal',
           }}
         >
-          + Add Manual Object
+          {clickDetectMode ? '⊗ Cancel Click Detect' : '🎯 Click to Detect Object'}
         </button>
         <button
           onClick={handleClearAll}
@@ -188,16 +221,45 @@ export const SetupEditor: React.FC<SetupEditorProps> = ({
         </button>
       </div>
 
+      {detectMessage && (
+        <div style={{
+          padding: '12px 20px',
+          backgroundColor: detectMessage.startsWith('✓') ? '#d4edda' : '#f8d7da',
+          color: detectMessage.startsWith('✓') ? '#155724' : '#721c24',
+          border: `1px solid ${detectMessage.startsWith('✓') ? '#c3e6cb' : '#f5c6cb'}`,
+          borderRadius: '4px',
+          marginBottom: '10px',
+          fontSize: '14px',
+        }}>
+          {detectMessage}
+        </div>
+      )}
+
       <div style={{ display: 'flex', gap: '20px' }}>
         <div style={{ flex: '1' }}>
+          {clickDetectMode && (
+            <div style={{
+              marginBottom: '10px',
+              padding: '10px',
+              backgroundColor: '#fff3cd',
+              border: '1px solid #ffc107',
+              borderRadius: '4px',
+              color: '#856404',
+              fontSize: '14px',
+            }}>
+              <strong>Click-to-detect mode active:</strong> Click on any control in the screenshot below to detect it.
+            </div>
+          )}
           <div
             ref={containerRef}
+            onClick={handleImageClick}
             style={{
               position: 'relative',
               display: 'inline-block',
-              border: '2px solid #ddd',
+              border: clickDetectMode ? '3px solid #ffc107' : '2px solid #ddd',
               borderRadius: '8px',
               overflow: 'hidden',
+              cursor: clickDetectMode ? (detectingAtPoint ? 'wait' : 'crosshair') : 'default',
             }}
           >
             <img
@@ -210,7 +272,12 @@ export const SetupEditor: React.FC<SetupEditorProps> = ({
             {objects.map(obj => (
               <div
                 key={obj.id}
-                onClick={() => setSelectedId(obj.id)}
+                onClick={(e) => {
+                  if (!clickDetectMode) {
+                    e.stopPropagation();
+                    setSelectedId(obj.id);
+                  }
+                }}
                 style={{
                   position: 'absolute',
                   left: obj.x * scaleX,
@@ -219,8 +286,9 @@ export const SetupEditor: React.FC<SetupEditorProps> = ({
                   height: obj.height * scaleY,
                   border: selectedId === obj.id ? '3px solid #007bff' : '2px solid rgba(255, 0, 0, 0.6)',
                   backgroundColor: 'rgba(0, 123, 255, 0.1)',
-                  cursor: 'pointer',
+                  cursor: clickDetectMode ? 'crosshair' : 'pointer',
                   boxSizing: 'border-box',
+                  pointerEvents: clickDetectMode ? 'none' : 'auto',
                 }}
               >
                 <div
